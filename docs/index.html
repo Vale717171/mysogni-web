@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>MySogni Web</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>MySogni Web</h1>
+      <button id="toggle-settings" type="button" class="link">Impostazioni</button>
+    </header>
+
+    <section id="settings" hidden>
+      <h2>Impostazioni</h2>
+      <p class="hint">Restano salvate solo in questo browser. Il token è un proxy token di Modal (Settings → Proxy Tokens).</p>
+      <label>Indirizzo del backend
+        <input id="api-url" type="url" placeholder="https://NOMEWORKSPACE--mysogni-web-api.modal.run" autocomplete="off">
+      </label>
+      <label>Token ID (wk-…)
+        <input id="modal-key" type="text" autocomplete="off" spellcheck="false">
+      </label>
+      <label>Token secret (ws-…)
+        <input id="modal-secret" type="password" autocomplete="off">
+      </label>
+      <div class="row">
+        <button id="save-settings" type="button">Salva</button>
+        <button id="test-settings" type="button" class="secondary">Prova la connessione</button>
+      </div>
+      <p id="settings-status" class="status" role="status"></p>
+    </section>
+
+    <section>
+      <form id="job-form">
+        <label>Prompt
+          <textarea id="prompt" rows="5" required placeholder="Descrivi la scena…"></textarea>
+        </label>
+        <div class="grid">
+          <label>Durata
+            <select id="duration">
+              <option value="5">5 secondi</option>
+              <option value="10">10 secondi</option>
+              <option value="15">15 secondi</option>
+            </select>
+          </label>
+          <label>Modello
+            <select id="model">
+              <option value="h3-ultrafast">H3 UltraFast</option>
+            </select>
+          </label>
+          <label>Backend
+            <select id="backend">
+              <option value="auto">Automatico</option>
+              <option value="modal">Modal</option>
+            </select>
+          </label>
+        </div>
+        <button id="submit" type="submit">Genera</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Lavori</h2>
+      <p id="empty" class="hint">Nessun lavoro in questa sessione.</p>
+      <ol id="jobs"></ol>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
