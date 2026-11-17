@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Installa Modal
-        run: pip install "modal>=1.6,<2"
+        run: pip install "modal>=1.6,<2" python-dotenv
       - name: Aggiorna il token di accesso su Modal
         run: |
           if [ -z "$MYSOGNI_API_TOKEN" ]; then
