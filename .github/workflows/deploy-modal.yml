@@ -27,6 +27,8 @@ jobs:
       MYSOGNI_GPU_ENABLED: ${{ vars.MYSOGNI_GPU_ENABLED || '0' }}
       # UltraFast: secondo interruttore, da accendere solo dopo aver scaricato i pesi in mysogni-gpu.
       MYSOGNI_ULTRAFAST_ENABLED: ${{ vars.MYSOGNI_ULTRAFAST_ENABLED || '0' }}
+      # Famiglia BF16 (UltraFast BF16 e Quality): solo dopo aver scaricato i pesi BF16 in mysogni-gpu.
+      MYSOGNI_BF16_ENABLED: ${{ vars.MYSOGNI_BF16_ENABLED || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
