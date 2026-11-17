@@ -21,6 +21,8 @@ jobs:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
       MYSOGNI_API_TOKEN: ${{ secrets.MYSOGNI_API_TOKEN }}
+      CHEAPERINFERENCE_API_KEY: ${{ secrets.CHEAPERINFERENCE_API_KEY }}
+      MYSOGNI_LLM_MODEL: ${{ vars.MYSOGNI_LLM_MODEL }}
       # Interruttore della spesa GPU: variabile di repository, assente = spento.
       MYSOGNI_GPU_ENABLED: ${{ vars.MYSOGNI_GPU_ENABLED || '0' }}
     steps:
@@ -40,5 +42,12 @@ jobs:
           printf 'API_TOKEN=%s\n' "$MYSOGNI_API_TOKEN" > "$RUNNER_TEMP/auth.env"
           modal secret create mysogni-web-auth --from-dotenv "$RUNNER_TEMP/auth.env" --force > /dev/null
           rm -f "$RUNNER_TEMP/auth.env"
+      - name: Aggiorna la chiave dello screenwriter su Modal
+        run: |
+          # Se il secret manca, lo screenwriter resta spento ma il resto si pubblica lo stesso.
+          umask 077
+          printf 'LLM_API_KEY=%s\n' "${CHEAPERINFERENCE_API_KEY:-unset}" > "$RUNNER_TEMP/llm.env"
+          modal secret create mysogni-web-llm --from-dotenv "$RUNNER_TEMP/llm.env" --force > /dev/null
+          rm -f "$RUNNER_TEMP/llm.env"
       - name: Pubblica
         run: modal deploy backend/modal_app.py

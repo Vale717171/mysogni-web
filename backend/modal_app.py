@@ -29,6 +29,10 @@ ALLOWED_ORIGINS = [
 # Letta in locale al deploy e copiata nell'immagine, così vale anche dentro i container.
 GPU_ENABLED = os.environ.get("MYSOGNI_GPU_ENABLED", "0") == "1"
 
+# Screenwriter: modello linguistico via Cheaper Inference (API compatibile OpenAI), sempre con zero data retention.
+LLM_BASE_URL = os.environ.get("MYSOGNI_LLM_BASE_URL") or "https://api.cheaperinference.com/v1"
+LLM_MODEL = os.environ.get("MYSOGNI_LLM_MODEL") or "deepseek-v4-flash-0731"
+
 app = modal.App(APP_NAME)
 
 outputs = modal.Volume.from_name("mysogni-web-outputs", create_if_missing=True)
@@ -36,7 +40,14 @@ outputs = modal.Volume.from_name("mysogni-web-outputs", create_if_missing=True)
 web_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("fastapi[standard]")
-    .env({"MYSOGNI_GPU_ENABLED": "1" if GPU_ENABLED else "0"})
+    .env(
+        {
+            "MYSOGNI_GPU_ENABLED": "1" if GPU_ENABLED else "0",
+            "MYSOGNI_LLM_BASE_URL": LLM_BASE_URL,
+            "MYSOGNI_LLM_MODEL": LLM_MODEL,
+        }
+    )
+    .add_local_file(Path(__file__).parent / "screenwriter.py", "/root/screenwriter.py")
 )
 fake_worker_image = modal.Image.debian_slim(python_version="3.12").apt_install("ffmpeg")
 
@@ -113,7 +124,7 @@ def _cleanup_old_outputs() -> None:
 @app.function(
     image=web_image,
     volumes={OUTPUT_DIR: outputs},
-    secrets=[modal.Secret.from_name("mysogni-web-auth")],
+    secrets=[modal.Secret.from_name("mysogni-web-auth"), modal.Secret.from_name("mysogni-web-llm")],
     timeout=120,
 )
 @modal.concurrent(max_inputs=20)
@@ -150,9 +161,67 @@ def api():
         resolution: str | None = None
         seed: int | None = None
 
+    class ScreenwriterRequest(BaseModel):
+        idea: str = Field(min_length=1, max_length=4000)
+        duration: int = 5
+
+    llm_key = os.environ.get("LLM_API_KEY", "").strip()
+    if llm_key == "unset":  # segnaposto scritto dal workflow quando manca il secret GitHub
+        llm_key = ""
+
     @web.get("/health")
     def health():
-        return {"ok": True, "gpu_enabled": GPU_ENABLED, "models": available_models()}
+        return {
+            "ok": True,
+            "gpu_enabled": GPU_ENABLED,
+            "models": available_models(),
+            "screenwriter": {"enabled": bool(llm_key), "model": LLM_MODEL},
+        }
+
+    @web.post("/screenwriter")
+    async def screenwriter(req: ScreenwriterRequest):
+        import httpx
+        from screenwriter import build_messages, clean_output
+
+        if req.duration not in ALLOWED_DURATIONS:
+            raise HTTPException(400, f"Durata non ammessa: {req.duration}")
+        if not llm_key:
+            raise HTTPException(503, "Screenwriter non configurato: manca la chiave di Cheaper Inference")
+        body = {
+            "model": LLM_MODEL,
+            "messages": build_messages(req.idea, req.duration),
+            "temperature": 0.7,
+            "max_tokens": 4000,
+            "zdr": True,  # zero data retention: solo fornitori che non conservano richieste e risposte
+        }
+        try:
+            async with httpx.AsyncClient(timeout=100) as client:
+                r = await client.post(
+                    f"{LLM_BASE_URL}/chat/completions",
+                    headers={"Authorization": f"Bearer {llm_key}"},
+                    json=body,
+                )
+        except httpx.HTTPError:
+            raise HTTPException(502, "Cheaper Inference non raggiungibile o troppo lento")
+        if r.status_code != 200:
+            code, message = "", ""
+            try:
+                error = r.json().get("error") or {}
+                code = str(error.get("code") or error.get("type") or "")
+                message = str(error.get("message") or "")
+            except Exception:
+                pass
+            if code == "zdr_capacity_unavailable":
+                raise HTTPException(
+                    503, f"Nessun fornitore con zero data retention disponibile ora per {LLM_MODEL}: riprova più tardi"
+                )
+            raise HTTPException(502, f"Cheaper Inference ha risposto {r.status_code} {code}: {message[:200]}".strip())
+        try:
+            text = r.json()["choices"][0]["message"].get("content") or ""
+            prompt = clean_output(text, req.duration)
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise HTTPException(502, f"Risposta del modello non utilizzabile: {exc}")
+        return {"prompt": prompt, "model": LLM_MODEL, "duration": req.duration}
 
     @web.post("/jobs")
     def create_job(req: JobRequest):
