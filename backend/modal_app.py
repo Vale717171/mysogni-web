@@ -144,6 +144,9 @@ def _cleanup_old_outputs() -> None:
     volumes={OUTPUT_DIR: outputs, "/config": private_config},
     secrets=[modal.Secret.from_name("mysogni-web-auth"), modal.Secret.from_name("mysogni-web-llm")],
     timeout=120,
+    # Router non prelazionabile: una prelazione a metà richiesta dava "500 Container terminated due to preemption".
+    # Costa 3 volte la tariffa CPU/RAM, su un router che consuma centesimi al mese.
+    nonpreemptible=True,
 )
 @modal.concurrent(max_inputs=20)
 @modal.asgi_app(label="mysogni-web-api")
