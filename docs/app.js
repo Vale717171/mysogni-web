@@ -202,12 +202,62 @@ async function loadModels() {
     );
     if (models.some((m) => m.id === current)) select.value = current;
     updateModelFields();
+    const writer = data.screenwriter || {};
+    $("screenwriter").hidden = !writer.enabled;
+    $("write-prompt").title = writer.model ? `Modello: ${writer.model}, zero data retention` : "";
   } catch {
     // La pagina resta utilizzabile con il solo video di prova.
   }
 }
 
 $("model").addEventListener("change", updateModelFields);
+
+// --- Screenwriter ---
+
+let writtenFor = null; // durata per cui è stato scritto il prompt attuale
+
+function checkPromptDuration() {
+  const duration = Number($("duration").value);
+  if (writtenFor !== null && writtenFor !== duration) {
+    setStatus(
+      $("screenwriter-status"),
+      `Il prompt è scritto per ${writtenFor} s: premi di nuovo "Scrivi il prompt H3" per adattarlo a ${duration} s.`,
+      true
+    );
+  } else if (writtenFor !== null) {
+    setStatus($("screenwriter-status"), `Prompt scritto per ${writtenFor} s. Puoi correggerlo a mano prima di generare.`);
+  }
+}
+
+$("duration").addEventListener("change", checkPromptDuration);
+
+$("write-prompt").addEventListener("click", async () => {
+  const status = $("screenwriter-status");
+  const idea = $("idea").value.trim();
+  if (!idea) {
+    setStatus(status, "Scrivi prima l'idea.", true);
+    return;
+  }
+  const duration = Number($("duration").value);
+  const button = $("write-prompt");
+  button.disabled = true;
+  setStatus(status, `Lo screenwriter sta scrivendo per ${duration} s…`);
+  try {
+    const response = await api("/screenwriter", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idea, duration }),
+    });
+    const data = await response.json();
+    $("prompt").value = data.prompt;
+    writtenFor = data.duration;
+    checkPromptDuration();
+  } catch (error) {
+    setStatus(status, error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 // --- Lavori ---
 
