@@ -78,7 +78,10 @@ async function api(path, options = {}) {
   if (!response.ok) {
     let detail = "";
     try { detail = (await response.json()).detail || ""; } catch { /* corpo non JSON */ }
-    throw new Error(`Errore ${response.status}${detail ? ": " + detail : ""}`);
+    const text = typeof detail === "object" && detail ? detail.message || "" : detail;
+    const error = new Error(`Errore ${response.status}${text ? ": " + text : ""}`);
+    if (typeof detail === "object" && detail) error.detail = detail;
+    throw error;
   }
   return response;
 }
@@ -268,7 +271,14 @@ $("write-prompt").addEventListener("click", async () => {
     writtenFor = data.duration;
     checkPromptDuration();
   } catch (error) {
-    setStatus(status, error.message, true);
+    let message = error.message;
+    if (error.detail && error.detail.raw) {
+      // Mostra cosa ha restituito il modello: si può correggere a mano invece di perderlo.
+      $("prompt").value = error.detail.raw;
+      writtenFor = null;
+      message += ` (fine: ${error.detail.finish_reason || "?"}). La risposta grezza è nel campo Prompt: controllala prima di generare.`;
+    }
+    setStatus(status, message, true);
   } finally {
     button.disabled = false;
   }
