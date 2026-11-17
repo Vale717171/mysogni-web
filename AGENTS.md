@@ -4,7 +4,7 @@ Pagina web (GitHub Pages) per generare video con MiniMax H3 su GPU remote. Il pi
 
 ## Regole
 
-- Nessuna generazione su GPU, nessun cambio di piano o limite di spesa su Modal o Google Cloud senza il consenso esplicito di Valentino. Il modello `test` non usa GPU e si può collaudare liberamente. Il modello `h3-prism` esiste solo se la variabile di repository `MYSOGNI_GPU_ENABLED` vale `1`: non attivarla e non lanciare lavori `h3-prism` senza consenso.
+- Nessuna generazione su GPU, nessun cambio di piano o limite di spesa su Modal o Google Cloud senza il consenso esplicito di Valentino. Il modello `test` non usa GPU e si può collaudare liberamente. Il modello `h3-prism` esiste solo se la variabile di repository `MYSOGNI_GPU_ENABLED` vale `1`; `h3-ultrafast-int8` richiede in più `MYSOGNI_ULTRAFAST_ENABLED=1` (dopo aver scaricato i pesi in mysogni-gpu). Non attivarle e non lanciare lavori GPU senza consenso.
 - Nessun segreto nel repository: il repository è pubblico. Token e chiavi stanno solo nei secret di GitHub o di Modal.
 - Prompt e video non vanno mai committati né scritti nei log di GitHub Actions.
 - Lavora su un ramo separato e apri una pull request; `main` pubblica in automatico pagina e backend.
@@ -20,7 +20,7 @@ Pagina web (GitHub Pages) per generare video con MiniMax H3 su GPU remote. Il pi
 ## Contratto dell'API
 
 - `GET /health` restituisce `{ok, gpu_enabled, models, screenwriter: {enabled, model}}`; la pagina costruisce da qui l'elenco dei modelli e delle risoluzioni.
-- `POST /jobs` con `{prompt, duration, model: test|h3-prism, backend, resolution?: 1344x768|896x512, seed?}` restituisce `{job_id, backend, model, seed?}`.
+- `POST /jobs` con `{prompt, duration, model: test|h3-prism|h3-ultrafast-int8, backend, resolution?, m3_strength?, seed?}` (PRISM: 1344x768|896x512; UltraFast: 896x512|672x384, `m3_strength` 0–2, predefinito 0,6) restituisce `{job_id, backend, model, seed?}`.
 - `GET /jobs/{job_id}` restituisce `{status: running|done|error, ...}` e, a job concluso, i tempi misurati.
 - `GET /jobs/{job_id}/video` restituisce l'MP4.
 - `POST /screenwriter` con `{idea, duration}` restituisce `{prompt, model, duration, prompt_source}`: prompt H3 in inglese (tre campi T2VA) scritto da un modello linguistico via Cheaper Inference. Il system prompt è quello privato di screenwriter-h3, copiato dal workflow di `mysogni-gpu` nel Volume `mysogni-private-config` e letto a ogni richiesta; se manca si usa quello di riserva in `backend/screenwriter.py` (`prompt_source: fallback`). Non copiare qui il prompt privato. Le richieste vanno sempre con `"zdr": true`. Se manca un fornitore con zero data retention risponde 503: non si ripiega mai su fornitori senza ZDR. La chiave sta nel secret GitHub `CHEAPERINFERENCE_API_KEY`, copiato nel secret Modal `mysogni-web-llm` (chiave `LLM_API_KEY`); il modello si cambia con la variabile di repository `MYSOGNI_LLM_MODEL` (predefinito `deepseek-v4-flash-0731`).

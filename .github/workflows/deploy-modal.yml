@@ -25,6 +25,8 @@ jobs:
       MYSOGNI_LLM_MODEL: ${{ vars.MYSOGNI_LLM_MODEL }}
       # Interruttore della spesa GPU: variabile di repository, assente = spento.
       MYSOGNI_GPU_ENABLED: ${{ vars.MYSOGNI_GPU_ENABLED || '0' }}
+      # UltraFast: secondo interruttore, da accendere solo dopo aver scaricato i pesi in mysogni-gpu.
+      MYSOGNI_ULTRAFAST_ENABLED: ${{ vars.MYSOGNI_ULTRAFAST_ENABLED || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

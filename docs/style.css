@@ -127,3 +127,5 @@ button.link {
 }
 
 .job a { color: var(--accent); font-size: 14px; }
+
+[hidden] { display: none !important; }
