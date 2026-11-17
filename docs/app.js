@@ -86,6 +86,7 @@ $("save-settings").addEventListener("click", () => {
     ok ? "Salvate." : "Salvate solo per questa sessione: il browser non permette di memorizzarle.",
     !ok
   );
+  loadModels();
 });
 
 $("test-settings").addEventListener("click", async () => {
@@ -97,11 +98,55 @@ $("test-settings").addEventListener("click", async () => {
   setStatus(status, "Provo…");
   try {
     const data = await (await api("/health")).json();
-    setStatus(status, data.fake_worker ? "Connesso. Worker di prova attivo: nessuna GPU in uso." : "Connesso.");
+    setStatus(status, data.gpu_enabled ? "Connesso. GPU abilitata." : "Connesso. GPU non abilitata: solo video di prova.");
+    await loadModels();
   } catch (error) {
     setStatus(status, error.message, true);
   }
 });
+
+// --- Modelli ---
+
+let models = [];
+
+function updateModelFields() {
+  const model = models.find((m) => m.id === $("model").value);
+  const resolutions = model ? model.resolutions : [];
+  $("resolution-field").hidden = resolutions.length === 0;
+  $("resolution").replaceChildren(
+    ...resolutions.map((r) => {
+      const option = document.createElement("option");
+      option.value = r;
+      option.textContent = r.replace("x", "×");
+      return option;
+    })
+  );
+  $("model-note").textContent = model ? model.note : "";
+}
+
+async function loadModels() {
+  if (!configured()) return;
+  try {
+    const data = await (await api("/health")).json();
+    models = data.models || [];
+    const select = $("model");
+    const current = select.value;
+    select.replaceChildren(
+      ...models.map((m) => {
+        const option = document.createElement("option");
+        option.value = m.id;
+        option.textContent = m.label;
+        return option;
+      })
+    );
+    if (models.some((m) => m.id === current)) select.value = current;
+    updateModelFields();
+  } catch {
+    // La pagina resta utilizzabile con il solo video di prova.
+  }
+}
+
+$("model").addEventListener("change", updateModelFields);
 
 // --- Lavori ---
 
@@ -148,8 +193,15 @@ async function poll(card, job, jobId, started) {
       return;
     }
     if (data.status === "done") {
-      const worker = data.timings ? `, worker ${data.timings.total_s} s` : "";
-      renderMeta(card, job, `pronto in ${elapsed} s${worker}${data.fake ? " · video di prova" : ""}`);
+      const t = data.timings || {};
+      const parts = [`pronto in ${elapsed} s`];
+      if (t.total_s != null) parts.push(`worker ${t.total_s} s`);
+      if (t.sampling_s != null) parts.push(`sampling ${t.sampling_s} s`);
+      if (data.resolution) parts.push(data.resolution);
+      if (data.seed != null) parts.push(`seed ${data.seed}`);
+      if (data.cold != null) parts.push(data.cold ? "a freddo" : "a caldo");
+      if (data.fake) parts.push("video di prova");
+      renderMeta(card, job, parts.join(" · "));
       await showVideo(card, jobId);
       return;
     }
@@ -180,6 +232,7 @@ $("job-form").addEventListener("submit", async (event) => {
     model: $("model").value,
     backend: $("backend").value,
   };
+  if (!$("resolution-field").hidden) job.resolution = $("resolution").value;
   if (!job.prompt) return;
 
   const submit = $("submit");
@@ -208,3 +261,5 @@ $("job-form").addEventListener("submit", async (event) => {
 
 fillSettingsForm();
 if (!configured()) $("settings").hidden = false;
+updateModelFields();
+loadModels();
