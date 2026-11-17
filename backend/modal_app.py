@@ -229,7 +229,7 @@ def api():
             "model": LLM_MODEL,
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 4000,
+            "max_tokens": 8000,
             "zdr": True,  # zero data retention: solo fornitori che non conservano richieste e risposte
         }
         try:
@@ -254,11 +254,19 @@ def api():
                     503, f"Nessun fornitore con zero data retention disponibile ora per {LLM_MODEL}: riprova più tardi"
                 )
             raise HTTPException(502, f"Cheaper Inference ha risposto {r.status_code} {code}: {message[:200]}".strip())
+        raw, finish = "", None
         try:
             choice = r.json()["choices"][0]
-            prompt = clean_output(choice["message"].get("content") or "", req.duration, choice.get("finish_reason"))
+            raw, finish = choice["message"].get("content") or "", choice.get("finish_reason")
+            prompt = clean_output(raw, req.duration, finish)
         except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise HTTPException(502, f"Risposta del modello non utilizzabile: {exc}")
+            # La risposta grezza torna solo al browser di chi l'ha chiesta (non viene scritta nei log),
+            # così si può leggere cosa ha prodotto il modello e, se serve, usarla a mano.
+            raise HTTPException(
+                502,
+                {"message": f"Risposta del modello non utilizzabile: {exc}", "finish_reason": finish,
+                 "raw": raw[:12000] if isinstance(raw, str) else None},
+            )
         return {"prompt": prompt, "model": LLM_MODEL, "duration": req.duration, "prompt_source": prompt_source}
 
     @web.post("/jobs")

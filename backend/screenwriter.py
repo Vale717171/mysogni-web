@@ -69,6 +69,11 @@ def clean_output(text: str, duration: int, finish_reason: str | None = None) -> 
     text = unicodedata.normalize("NFC", text or "")
     text = "".join(c for c in text if c in "\n\t" or unicodedata.category(c) not in ("Cc", "Cf")).strip()
     text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    if not text:
+        raise ValueError("risposta vuota (il modello potrebbe aver speso tutti i token nel ragionamento)")
+    # Tolleranza di forma: titoli markdown, grassetti, maiuscole o spazi intorno ai nomi dei campi.
+    names = "|".join(FIELDS)
+    text = re.sub(rf"^[ \t#>*_`-]*({names})[ \t*_`]*:[ \t*_`]*", lambda m: m[1].lower() + ": ", text, flags=re.M | re.I)
     start = text.find(FIELDS[0] + ":")
     if start < 0:
         raise ValueError("manca il campo integrated_multimodal_description")
