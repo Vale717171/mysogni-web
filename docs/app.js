@@ -29,11 +29,11 @@ function apiBase() {
 }
 
 function authHeaders() {
-  return { "Modal-Key": settings.modalKey || "", "Modal-Secret": settings.modalSecret || "" };
+  return { Authorization: `Bearer ${settings.apiToken || ""}` };
 }
 
 function configured() {
-  return Boolean(apiBase() && settings.modalKey && settings.modalSecret);
+  return Boolean(apiBase() && settings.apiToken);
 }
 
 async function api(path, options = {}) {
@@ -45,11 +45,11 @@ async function api(path, options = {}) {
     });
   } catch {
     throw new Error(
-      "Connessione non riuscita. Controlla indirizzo e token; se sono giusti, il blocco è probabilmente il CORS."
+      "Connessione non riuscita: controlla l'indirizzo del backend."
     );
   }
   if (response.status === 401 || response.status === 403) {
-    throw new Error("Token rifiutato: controlla Token ID e secret.");
+    throw new Error("Token rifiutato: controlla il token di accesso.");
   }
   if (!response.ok) {
     let detail = "";
@@ -63,8 +63,7 @@ async function api(path, options = {}) {
 
 function fillSettingsForm() {
   $("api-url").value = settings.apiUrl || "";
-  $("modal-key").value = settings.modalKey || "";
-  $("modal-secret").value = settings.modalSecret || "";
+  $("api-token").value = settings.apiToken || "";
 }
 
 function setStatus(element, text, isError = false) {
@@ -79,8 +78,7 @@ $("toggle-settings").addEventListener("click", () => {
 $("save-settings").addEventListener("click", () => {
   settings = {
     apiUrl: $("api-url").value.trim(),
-    modalKey: $("modal-key").value.trim(),
-    modalSecret: $("modal-secret").value.trim(),
+    apiToken: $("api-token").value.trim(),
   };
   const ok = saveSettings(settings);
   setStatus(
@@ -93,7 +91,7 @@ $("save-settings").addEventListener("click", () => {
 $("test-settings").addEventListener("click", async () => {
   const status = $("settings-status");
   if (!configured()) {
-    setStatus(status, "Compila e salva prima tutti e tre i campi.", true);
+    setStatus(status, "Compila e salva prima entrambi i campi.", true);
     return;
   }
   setStatus(status, "Provo…");

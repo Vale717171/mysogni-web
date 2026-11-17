@@ -22,4 +22,4 @@ Pagina web (GitHub Pages) per generare video con MiniMax H3 su GPU remote. Il pi
 - `GET /jobs/{job_id}` restituisce `{status: running|done|error, ...}` e, a job concluso, i tempi misurati.
 - `GET /jobs/{job_id}/video` restituisce l'MP4.
 
-Ogni richiesta porta le intestazioni `Modal-Key` e `Modal-Secret` di un proxy token del workspace.
+Ogni richiesta porta `Authorization: Bearer <token>`. Il token sta nel secret GitHub `MYSOGNI_API_TOKEN`, che il workflow copia nel secret Modal `mysogni-web-auth` (chiave `API_TOKEN`). Il proxy token di Modal non si usa perché blocca la richiesta preliminare CORS del browser (verificato il 17/11/2026).

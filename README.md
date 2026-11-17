@@ -10,8 +10,8 @@ Pagina web per generare video con MiniMax H3 su GPU remote, senza notebook né s
 
 1. Apri la pagina su GitHub Pages: `https://vale717171.github.io/mysogni-web/`.
 2. In **Impostazioni** inserisci:
-   - l'indirizzo del backend, stampato in fondo al log di **Actions → Deploy backend su Modal** (finisce con `--mysogni-web-api.modal.run`);
-   - Token ID (`wk-…`) e secret (`ws-…`) di un proxy token di Modal.
+   - l'indirizzo del backend: `https://valentinoricco--mysogni-web-api.us-east.modal.run` (è anche in fondo al log di **Actions → Deploy backend su Modal**);
+   - il token di accesso, cioè lo stesso valore del secret `MYSOGNI_API_TOKEN`.
 3. **Prova la connessione**, poi genera.
 
 Le impostazioni restano salvate solo nel browser del dispositivo.
@@ -21,6 +21,6 @@ Le impostazioni restano salvate solo nel browser del dispositivo.
 Ogni push su `main` ripubblica in automatico:
 
 - la pagina, se cambia `docs/`;
-- il backend su Modal, se cambia `backend/`. Servono i secret del repository `MODAL_TOKEN_ID` e `MODAL_TOKEN_SECRET`.
+- il backend su Modal, se cambia `backend/`. Servono i secret del repository `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` e `MYSOGNI_API_TOKEN`.
 
 Regole per chi lavora sul codice, persone o agenti: vedi `AGENTS.md`.

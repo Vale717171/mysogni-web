@@ -20,6 +20,7 @@ jobs:
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      MYSOGNI_API_TOKEN: ${{ secrets.MYSOGNI_API_TOKEN }}
       MYSOGNI_FAKE_WORKER: "1"
     steps:
       - uses: actions/checkout@v4
@@ -28,5 +29,15 @@ jobs:
           python-version: "3.12"
       - name: Installa Modal
         run: pip install "modal>=1.6,<2"
+      - name: Aggiorna il token di accesso su Modal
+        run: |
+          if [ -z "$MYSOGNI_API_TOKEN" ]; then
+            echo "::error::Manca il secret MYSOGNI_API_TOKEN nel repository"
+            exit 1
+          fi
+          umask 077
+          printf 'API_TOKEN=%s\n' "$MYSOGNI_API_TOKEN" > "$RUNNER_TEMP/auth.env"
+          modal secret create mysogni-web-auth --from-dotenv "$RUNNER_TEMP/auth.env" --force > /dev/null
+          rm -f "$RUNNER_TEMP/auth.env"
       - name: Pubblica
         run: modal deploy backend/modal_app.py

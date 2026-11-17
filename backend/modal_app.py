@@ -79,21 +79,37 @@ def _cleanup_old_outputs() -> None:
         outputs.commit()
 
 
-@app.function(image=web_image, volumes={OUTPUT_DIR: outputs}, timeout=120)
+# Autenticazione: token bearer custodito nel secret Modal "mysogni-web-auth" (chiave API_TOKEN).
+# Il proxy token di Modal non si usa qui perché blocca la richiesta preliminare CORS del browser.
+@app.function(
+    image=web_image,
+    volumes={OUTPUT_DIR: outputs},
+    secrets=[modal.Secret.from_name("mysogni-web-auth")],
+    timeout=120,
+)
 @modal.concurrent(max_inputs=20)
-@modal.asgi_app(label="mysogni-web-api", requires_proxy_auth=True)
+@modal.asgi_app(label="mysogni-web-api")
 def api():
-    from fastapi import FastAPI, HTTPException
+    import hmac
+
+    from fastapi import Depends, FastAPI, Header, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse
     from pydantic import BaseModel, Field
 
-    web = FastAPI(title="MySogni Web", docs_url=None, redoc_url=None)
+    expected = os.environ.get("API_TOKEN", "")
+
+    def check_token(authorization: str = Header(default="")):
+        supplied = authorization.removeprefix("Bearer ").strip()
+        if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
+            raise HTTPException(401, "Token mancante o non valido")
+
+    web = FastAPI(title="MySogni Web", docs_url=None, redoc_url=None, dependencies=[Depends(check_token)])
     web.add_middleware(
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "Modal-Key", "Modal-Secret", "Authorization"],
+        allow_headers=["Content-Type", "Authorization"],
     )
 
     class JobRequest(BaseModel):
