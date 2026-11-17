@@ -2,6 +2,7 @@
 
 const STORAGE_KEY = "mysogni-web-settings";
 const POLL_MS = 4000;
+const DEFAULT_API = "https://valentinoricco--mysogni-web-api.us-east.modal.run";
 
 const $ = (id) => document.getElementById(id);
 
@@ -23,6 +24,29 @@ function saveSettings(settings) {
 }
 
 let settings = loadSettings();
+
+// Link di configurazione: https://vale717171.github.io/mysogni-web/#token=<TOKEN>[&api=<URL>]
+// La parte dopo "#" non viene inviata a nessun server; la togliamo subito dalla barra degli indirizzi.
+function applySetupLink() {
+  if (!location.hash.includes("token=")) return null;
+  const params = {};
+  for (const pair of location.hash.slice(1).split("&")) {
+    const i = pair.indexOf("=");
+    if (i > 0) {
+      try {
+        params[pair.slice(0, i)] = decodeURIComponent(pair.slice(i + 1));
+      } catch {
+        // parametro malformato: ignorato
+      }
+    }
+  }
+  history.replaceState(null, "", location.pathname + location.search);
+  if (!params.token) return null;
+  settings = { ...settings, apiToken: params.token.trim(), apiUrl: params.api || settings.apiUrl || DEFAULT_API };
+  return saveSettings(settings);
+}
+
+const setupResult = applySetupLink();
 
 function apiBase() {
   return (settings.apiUrl || "").replace(/\/+$/, "");
@@ -87,6 +111,23 @@ $("save-settings").addEventListener("click", () => {
     !ok
   );
   loadModels();
+});
+
+$("copy-setup-link").addEventListener("click", async () => {
+  const status = $("settings-status");
+  if (!configured()) {
+    setStatus(status, "Salva prima indirizzo e token.", true);
+    return;
+  }
+  const base = location.origin + location.pathname;
+  let link = `${base}#token=${encodeURIComponent(settings.apiToken)}`;
+  if (apiBase() !== DEFAULT_API) link += `&api=${encodeURIComponent(apiBase())}`;
+  try {
+    await navigator.clipboard.writeText(link);
+    setStatus(status, "Link copiato. Contiene il token: conservalo nel password manager, non condividerlo.");
+  } catch {
+    setStatus(status, "Il browser non permette di copiare negli appunti.", true);
+  }
 });
 
 $("test-settings").addEventListener("click", async () => {
@@ -261,5 +302,15 @@ $("job-form").addEventListener("submit", async (event) => {
 
 fillSettingsForm();
 if (!configured()) $("settings").hidden = false;
+if (setupResult !== null) {
+  $("settings").hidden = false;
+  setStatus(
+    $("settings-status"),
+    setupResult
+      ? "Configurazione importata dal link e salvata su questo dispositivo."
+      : "Configurazione importata solo per questa sessione: il browser non permette di memorizzarla.",
+    !setupResult
+  );
+}
 updateModelFields();
 loadModels();
