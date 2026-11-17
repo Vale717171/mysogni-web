@@ -20,6 +20,8 @@ OUTPUT_DIR = "/outputs"
 RETENTION_DAYS = 7
 ALLOWED_DURATIONS = {5, 10, 15}
 PRISM_RESOLUTIONS = {"1344x768": (1344, 768), "896x512": (896, 512)}
+ULTRAFAST_RESOLUTIONS = {"896x512": (896, 512), "672x384": (672, 384)}
+M3_CHOICES = [0.6, 1.0, 0.0]  # il primo è il predefinito
 ALLOWED_ORIGINS = [
     "https://vale717171.github.io",
     "http://localhost:8000",
@@ -28,6 +30,8 @@ ALLOWED_ORIGINS = [
 
 # Letta in locale al deploy e copiata nell'immagine, così vale anche dentro i container.
 GPU_ENABLED = os.environ.get("MYSOGNI_GPU_ENABLED", "0") == "1"
+# UltraFast richiede anche i pesi nel Volume (workflow "Scarica i pesi UltraFast" in mysogni-gpu): interruttore separato.
+ULTRAFAST_ENABLED = GPU_ENABLED and os.environ.get("MYSOGNI_ULTRAFAST_ENABLED", "0") == "1"
 
 # Screenwriter: modello linguistico via Cheaper Inference (API compatibile OpenAI), sempre con zero data retention.
 LLM_BASE_URL = os.environ.get("MYSOGNI_LLM_BASE_URL") or "https://api.cheaperinference.com/v1"
@@ -45,6 +49,7 @@ web_image = (
     .env(
         {
             "MYSOGNI_GPU_ENABLED": "1" if GPU_ENABLED else "0",
+            "MYSOGNI_ULTRAFAST_ENABLED": "1" if ULTRAFAST_ENABLED else "0",
             "MYSOGNI_LLM_BASE_URL": LLM_BASE_URL,
             "MYSOGNI_LLM_MODEL": LLM_MODEL,
         }
@@ -71,6 +76,17 @@ def available_models() -> list[dict]:
                 "label": "H3 PRISM (GPU)",
                 "note": "Stima dal pilota, a freddo, 1344×768: 5 s in circa 3 min (0,19 $), 15 s in circa 12 min (0,75 $).",
                 "resolutions": list(PRISM_RESOLUTIONS),
+            },
+        )
+    if ULTRAFAST_ENABLED:
+        models.insert(
+            0,
+            {
+                "id": "h3-ultrafast-int8",
+                "label": "H3 UltraFast INT8 + M3 (GPU)",
+                "note": "6 step con Turbo LoRA, LoRA M3 di default a 0,6. Mai misurato su Modal: su Colab il profilo NVFP4 a 672×384 ha fatto 5 s in 16 s di workflow, più l'avvio a freddo.",
+                "resolutions": list(ULTRAFAST_RESOLUTIONS),
+                "m3": M3_CHOICES,
             },
         )
     return models
@@ -161,6 +177,7 @@ def api():
         model: str = "test"
         backend: str = "auto"
         resolution: str | None = None
+        m3_strength: float | None = None
         seed: int | None = None
 
     class ScreenwriterRequest(BaseModel):
@@ -176,6 +193,7 @@ def api():
         return {
             "ok": True,
             "gpu_enabled": GPU_ENABLED,
+            "ultrafast_enabled": ULTRAFAST_ENABLED,
             "models": available_models(),
             "screenwriter": {"enabled": bool(llm_key), "model": LLM_MODEL, "prompt": _prompt_source()},
         }
@@ -259,6 +277,24 @@ def api():
         if req.model == "test":
             call = generate.spawn(req.prompt, req.duration, req.model, req.seed)
             return {"job_id": call.object_id, "backend": "modal", "model": "test"}
+
+        if req.model == "h3-ultrafast-int8":
+            resolution = req.resolution or "896x512"
+            if resolution not in ULTRAFAST_RESOLUTIONS:
+                raise HTTPException(400, f"Risoluzione non ammessa: {resolution}")
+            m3 = M3_CHOICES[0] if req.m3_strength is None else req.m3_strength
+            if not 0 <= m3 <= 2:
+                raise HTTPException(400, "Intensità M3: da 0 a 2")
+            if req.seed is not None and req.seed >= 2**32:
+                raise HTTPException(400, "Seed UltraFast: da 0 a 2^32-1")
+            width, height = ULTRAFAST_RESOLUTIONS[resolution]
+            seed = req.seed if req.seed is not None else random.randrange(2**32)
+            worker = modal.Cls.from_name(GPU_APP_NAME, "UltraFast")
+            call = worker().generate.spawn(
+                {"prompt": req.prompt, "duration": req.duration, "width": width, "height": height, "seed": seed,
+                 "m3_strength": m3}
+            )
+            return {"job_id": call.object_id, "backend": "modal", "model": req.model, "seed": seed}
 
         resolution = req.resolution or "1344x768"
         if resolution not in PRISM_RESOLUTIONS:

@@ -182,6 +182,16 @@ function updateModelFields() {
       return option;
     })
   );
+  const m3 = model && model.m3 ? model.m3 : [];
+  $("m3-field").hidden = m3.length === 0;
+  $("m3").replaceChildren(
+    ...m3.map((value, i) => {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = value === 0 ? "spenta" : value.toFixed(1).replace(".", ",") + (i === 0 ? " (predefinita)" : "");
+      return option;
+    })
+  );
   $("model-note").textContent = model ? model.note : "";
 }
 
@@ -200,7 +210,9 @@ async function loadModels() {
         return option;
       })
     );
-    if (models.some((m) => m.id === current)) select.value = current;
+    // Finché l'utente non sceglie, si propone il primo modello dell'elenco (il più adatto secondo il backend).
+    if (select.dataset.touched && models.some((m) => m.id === current)) select.value = current;
+    else if (models.length) select.value = models[0].id;
     updateModelFields();
     const writer = data.screenwriter || {};
     $("screenwriter").hidden = !writer.enabled;
@@ -210,7 +222,10 @@ async function loadModels() {
   }
 }
 
-$("model").addEventListener("change", updateModelFields);
+$("model").addEventListener("change", () => {
+  $("model").dataset.touched = "1";
+  updateModelFields();
+});
 
 // --- Screenwriter ---
 
@@ -308,6 +323,9 @@ async function poll(card, job, jobId, started) {
       const parts = [`pronto in ${elapsed} s`];
       if (t.total_s != null) parts.push(`worker ${t.total_s} s`);
       if (t.sampling_s != null) parts.push(`sampling ${t.sampling_s} s`);
+      if (t.workflow_s != null) parts.push(`workflow ${t.workflow_s} s`);
+      if (data.m3_strength != null) parts.push(data.m3_strength > 0 ? `M3 ${data.m3_strength}${data.m3_applied ? "" : " NON verificata"}` : "M3 spenta");
+      if (data.lora_applied === false) parts.push("Turbo LoRA non verificata");
       if (data.resolution) parts.push(data.resolution);
       if (data.seed != null) parts.push(`seed ${data.seed}`);
       if (data.cold != null) parts.push(data.cold ? "a freddo" : "a caldo");
@@ -344,6 +362,7 @@ $("job-form").addEventListener("submit", async (event) => {
     backend: $("backend").value,
   };
   if (!$("resolution-field").hidden) job.resolution = $("resolution").value;
+  if (!$("m3-field").hidden) job.m3_strength = Number($("m3").value);
   if (!job.prompt) return;
 
   const submit = $("submit");
