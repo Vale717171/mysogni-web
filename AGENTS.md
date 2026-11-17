@@ -17,6 +17,7 @@ Pagina web (GitHub Pages) per generare video con MiniMax H3 su GPU remote. Il pi
 - `docs/`: la pagina statica pubblicata da `.github/workflows/pages.yml`.
 - `backend/modal_app.py`: router web (CPU) e worker di prova, pubblicati da `.github/workflows/deploy-modal.yml`.
 - Worker GPU: repository privato `Vale717171/mysogni-gpu`, app Modal `mysogni-gpu`, classe `Generator`. Il router lo chiama per nome con `modal.Cls.from_name`; il codice PRISM non va copiato qui, perché questo repository è pubblico.
+- `backend/google_backend.py`: backend Google Cloud. Esegue il lavoro Cloud Run `mysogni-turbo-bf16` (codice in mysogni-gpu) con override `JOB_ID`/`CONFIG`, legge risultato e MP4 dal bucket `<GCP_PROJECT>-results`, stima la spesa mensile in un `modal.Dict`. Con `backend: auto` usa Google per i modelli in `MODELS` finché la stima resta sotto `GCP_BUDGET_USD` (variabile di repository, predefinito 8,5 $), poi Modal; se Google rifiuta il lavoro passa a Modal. Chiave del service account `mysogni-router` nel secret GitHub `GCP_ROUTER_KEY`, copiata nel secret Modal `mysogni-web-gcp`. I job Google hanno ID `g-…`.
 - `backend/worker/`: segnaposto per il futuro modello UltraFast (script di Colab di MySogni).
 
 ## Contratto dell'API

@@ -42,14 +42,22 @@ LLM_MODEL = os.environ.get("MYSOGNI_LLM_MODEL") or "deepseek-v4-flash-0731"
 app = modal.App(APP_NAME)
 
 outputs = modal.Volume.from_name("mysogni-web-outputs", create_if_missing=True)
+# Esecuzioni e spesa mensile del backend Google Cloud.
+google_store = modal.Dict.from_name("mysogni-web-google", create_if_missing=True)
+GCP = {
+    "MYSOGNI_GCP_PROJECT": os.environ.get("MYSOGNI_GCP_PROJECT", ""),
+    "MYSOGNI_GCP_REGION": os.environ.get("MYSOGNI_GCP_REGION", "") or "europe-west4",
+    "MYSOGNI_GCP_BUDGET_USD": os.environ.get("MYSOGNI_GCP_BUDGET_USD", "") or "8.5",
+}
 # Configurazione privata (system prompt dello screenwriter), scritta dal workflow del repository privato mysogni-gpu.
 private_config = modal.Volume.from_name("mysogni-private-config", create_if_missing=True)
 
 web_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("fastapi[standard]")
+    .pip_install("fastapi[standard]", "google-auth==2.62.2", "requests==2.34.2")
     .env(
         {
+            **GCP,
             "MYSOGNI_GPU_ENABLED": "1" if GPU_ENABLED else "0",
             "MYSOGNI_ULTRAFAST_ENABLED": "1" if ULTRAFAST_ENABLED else "0",
             "MYSOGNI_BF16_ENABLED": "1" if BF16_ENABLED else "0",
@@ -58,6 +66,7 @@ web_image = (
         }
     )
     .add_local_file(Path(__file__).parent / "screenwriter.py", "/root/screenwriter.py")
+    .add_local_file(Path(__file__).parent / "google_backend.py", "/root/google_backend.py")
 )
 fake_worker_image = modal.Image.debian_slim(python_version="3.12").apt_install("ffmpeg")
 
@@ -180,7 +189,8 @@ def _cleanup_old_outputs() -> None:
 @app.function(
     image=web_image,
     volumes={OUTPUT_DIR: outputs, "/config": private_config},
-    secrets=[modal.Secret.from_name("mysogni-web-auth"), modal.Secret.from_name("mysogni-web-llm")],
+    secrets=[modal.Secret.from_name("mysogni-web-auth"), modal.Secret.from_name("mysogni-web-llm"),
+             modal.Secret.from_name("mysogni-web-gcp")],
     timeout=120,
     # Router non prelazionabile: una prelazione a metà richiesta dava "500 Container terminated due to preemption".
     # Costa 3 volte la tariffa CPU/RAM, su un router che consuma centesimi al mese.
@@ -190,6 +200,10 @@ def _cleanup_old_outputs() -> None:
 @modal.asgi_app(label="mysogni-web-api")
 def api():
     import hmac
+
+    import google_backend
+
+    google = google_backend.Google(google_store)
     import random
 
     from fastapi import Depends, FastAPI, Header, HTTPException
@@ -240,6 +254,13 @@ def api():
             "bf16_enabled": BF16_ENABLED,
             "models": available_models(),
             "screenwriter": {"enabled": bool(llm_key), "model": LLM_MODEL, "prompt": _prompt_source()},
+            "google": {
+                "enabled": google_backend.enabled(),
+                "region": google_backend.REGION,
+                "models": sorted(google_backend.MODELS),
+                "budget_usd": google_backend.BUDGET_USD,
+                "spent_usd_month": google.spent_usd() if google_backend.enabled() else 0,
+            },
         }
 
     def _reload_config() -> None:
@@ -320,8 +341,8 @@ def api():
             raise HTTPException(400, f"Modello non disponibile: {req.model}")
         if req.duration not in ALLOWED_DURATIONS:
             raise HTTPException(400, f"Durata non ammessa: {req.duration}")
-        if req.backend not in {"auto", "modal"}:
-            raise HTTPException(400, "Backend non disponibile (Cloud Run arriva con M2)")
+        if req.backend not in {"auto", "modal", "google"}:
+            raise HTTPException(400, f"Backend non valido: {req.backend}")
         if req.seed is not None and not 0 <= req.seed < 2**63:
             raise HTTPException(400, "Seed non valido")
         _cleanup_old_outputs()
@@ -366,12 +387,34 @@ def api():
         if req.seed is not None and req.seed >= limit:
             raise HTTPException(400, f"Seed: da 0 a {limit - 1}")
         config["seed"] = req.seed if req.seed is not None else random.randrange(limit)
+        # Google: solo i modelli portati su Cloud Run; "auto" lo preferisce finché c'è budget dei crediti.
+        google_ok = google_backend.enabled() and req.model in google_backend.MODELS
+        if req.backend == "google":
+            if not google_ok:
+                raise HTTPException(400, "Google Cloud non disponibile per questo modello")
+            if not google.has_budget():
+                raise HTTPException(400, f"Budget mensile Google esaurito (stima {google.spent_usd()} $)")
+        if req.backend == "google" or (req.backend == "auto" and google_ok and google.has_budget()):
+            try:
+                job_id = google.start(config)
+                return {"job_id": job_id, "backend": "google", "model": req.model, "seed": config["seed"]}
+            except Exception as exc:
+                if req.backend == "google":
+                    raise HTTPException(502, str(exc)[:400])
+                # "auto": se Google rifiuta (GPU non disponibile, crediti, quota) si passa a Modal.
         worker = modal.Cls.from_name(GPU_APP_NAME, spec["cls"])
         call = worker().generate.spawn(config)
         return {"job_id": call.object_id, "backend": "modal", "model": req.model, "seed": config["seed"]}
 
     @web.get("/jobs/{job_id}")
     def job_status(job_id: str):
+        if job_id.startswith("g-"):
+            if not google_backend.enabled():
+                raise HTTPException(404, "Job non trovato")
+            try:
+                return google.status(job_id)
+            except Exception as exc:
+                raise HTTPException(502, str(exc)[:300])
         try:
             call = modal.FunctionCall.from_id(job_id)
         except Exception:
@@ -390,6 +433,11 @@ def api():
     def job_video(job_id: str):
         if not job_id.replace("-", "").isalnum():
             raise HTTPException(400, "ID non valido")
+        if job_id.startswith("g-"):
+            path = Path("/tmp") / f"{job_id}.mp4"
+            if not path.exists() and not (google_backend.enabled() and google.video(job_id, str(path))):
+                raise HTTPException(404, "Video non disponibile")
+            return FileResponse(path, media_type="video/mp4", filename=f"mysogni-{job_id}.mp4")
         outputs.reload()
         path = Path(OUTPUT_DIR) / f"{job_id}.mp4"
         if not path.exists():
