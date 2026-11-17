@@ -176,28 +176,42 @@ $("test-settings").addEventListener("click", async () => {
 
 let models = [];
 
+function fillSelect(id, values, label) {
+  $(id).replaceChildren(
+    ...values.map((value, i) => {
+      const option = document.createElement("option");
+      option.value = String(value.id ?? value);
+      option.textContent = label(value, i);
+      return option;
+    })
+  );
+}
+
+function updateOptionFields() {
+  const model = models.find((m) => m.id === $("model").value);
+  const profile = model && model.profiles ? model.profiles.find((p) => p.id === $("profile").value) : null;
+  const scope = profile || model;
+  const resolutions = scope ? scope.resolutions || [] : [];
+  const previous = $("resolution").value;
+  $("resolution-field").hidden = resolutions.length === 0;
+  fillSelect("resolution", resolutions, (r) => r.replace("x", "×"));
+  if (resolutions.includes(previous)) $("resolution").value = previous;
+  const m3 = scope && scope.m3 ? scope.m3 : [];
+  $("m3-field").hidden = m3.length === 0;
+  fillSelect("m3", m3, (value, i) =>
+    value === 0 ? "spenta" : value.toFixed(1).replace(".", ",") + (i === 0 ? " (predefinita)" : "")
+  );
+}
+
 function updateModelFields() {
   const model = models.find((m) => m.id === $("model").value);
-  const resolutions = model ? model.resolutions : [];
-  $("resolution-field").hidden = resolutions.length === 0;
-  $("resolution").replaceChildren(
-    ...resolutions.map((r) => {
-      const option = document.createElement("option");
-      option.value = r;
-      option.textContent = r.replace("x", "×");
-      return option;
-    })
-  );
-  const m3 = model && model.m3 ? model.m3 : [];
-  $("m3-field").hidden = m3.length === 0;
-  $("m3").replaceChildren(
-    ...m3.map((value, i) => {
-      const option = document.createElement("option");
-      option.value = String(value);
-      option.textContent = value === 0 ? "spenta" : value.toFixed(1).replace(".", ",") + (i === 0 ? " (predefinita)" : "");
-      return option;
-    })
-  );
+  const profiles = model && model.profiles ? model.profiles : [];
+  $("profile-field").hidden = profiles.length === 0;
+  fillSelect("profile", profiles, (p, i) => p.label + (i === 0 ? " (predefinito)" : ""));
+  const steps = model && model.steps ? model.steps : [];
+  $("steps-field").hidden = steps.length === 0;
+  fillSelect("steps", steps, (n, i) => `${n} step` + (i === 0 ? " (predefinito)" : ""));
+  updateOptionFields();
   $("model-note").textContent = model ? model.note : "";
 }
 
@@ -227,6 +241,8 @@ async function loadModels() {
     // La pagina resta utilizzabile con il solo video di prova.
   }
 }
+
+$("profile").addEventListener("change", updateOptionFields);
 
 $("model").addEventListener("change", () => {
   $("model").dataset.touched = "1";
@@ -380,6 +396,8 @@ function doneText(data, elapsed) {
   if (t.workflow_s != null) parts.push(`workflow ${t.workflow_s} s`);
   if (data.m3_strength != null) parts.push(data.m3_strength > 0 ? `M3 ${data.m3_strength}${data.m3_applied ? "" : " NON verificata"}` : "M3 spenta");
   if (data.lora_applied === false) parts.push("Turbo LoRA non verificata");
+  if (data.profile) parts.push(data.profile);
+  if (data.steps != null) parts.push(`${data.steps} step`);
   if (data.resolution) parts.push(data.resolution);
   if (data.seed != null) parts.push(`seed ${data.seed}`);
   if (data.cold != null) parts.push(data.cold ? "a freddo" : "a caldo");
@@ -465,6 +483,8 @@ $("job-form").addEventListener("submit", async (event) => {
   };
   if (!$("resolution-field").hidden) job.resolution = $("resolution").value;
   if (!$("m3-field").hidden) job.m3_strength = Number($("m3").value);
+  if (!$("profile-field").hidden) job.profile = $("profile").value;
+  if (!$("steps-field").hidden) job.steps = Number($("steps").value);
   if (!job.prompt) return;
 
   const submit = $("submit");

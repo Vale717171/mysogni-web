@@ -32,6 +32,8 @@ ALLOWED_ORIGINS = [
 GPU_ENABLED = os.environ.get("MYSOGNI_GPU_ENABLED", "0") == "1"
 # UltraFast richiede anche i pesi nel Volume (workflow "Scarica i pesi UltraFast" in mysogni-gpu): interruttore separato.
 ULTRAFAST_ENABLED = GPU_ENABLED and os.environ.get("MYSOGNI_ULTRAFAST_ENABLED", "0") == "1"
+# Famiglia BF16 (UltraFast BF16 e Quality): richiede i pesi BF16 (workflow "Scarica i pesi BF16" in mysogni-gpu).
+BF16_ENABLED = GPU_ENABLED and os.environ.get("MYSOGNI_BF16_ENABLED", "0") == "1"
 
 # Screenwriter: modello linguistico via Cheaper Inference (API compatibile OpenAI), sempre con zero data retention.
 LLM_BASE_URL = os.environ.get("MYSOGNI_LLM_BASE_URL") or "https://api.cheaperinference.com/v1"
@@ -50,6 +52,7 @@ web_image = (
         {
             "MYSOGNI_GPU_ENABLED": "1" if GPU_ENABLED else "0",
             "MYSOGNI_ULTRAFAST_ENABLED": "1" if ULTRAFAST_ENABLED else "0",
+            "MYSOGNI_BF16_ENABLED": "1" if BF16_ENABLED else "0",
             "MYSOGNI_LLM_BASE_URL": LLM_BASE_URL,
             "MYSOGNI_LLM_MODEL": LLM_MODEL,
         }
@@ -59,36 +62,71 @@ web_image = (
 fake_worker_image = modal.Image.debian_slim(python_version="3.12").apt_install("ffmpeg")
 
 
+QUALITY_RESOLUTIONS = {"1344x768": (1344, 768), "896x512": (896, 512)}
+
+# Catalogo dei modelli GPU: classe Modal in mysogni-gpu, risoluzioni, profili e opzioni. Il primo profilo è il predefinito.
+GPU_MODELS = {
+    "h3-turbo-bf16": {
+        "cls": "TurboBF16", "switch": "bf16", "label": "H3 UltraFast BF16 (GPU)",
+        "note": "Profili di MySogni: C = Turbo v4 8 step + M3, B = 8 step, A = 6 step. Encoder NVFP4. Mai misurato su Modal.",
+        "resolutions": ULTRAFAST_RESOLUTIONS,
+        "profiles": [
+            {"id": "turbo8-m3", "label": "C · 8 step + M3", "m3": True},
+            {"id": "turbo8", "label": "B · 8 step"},
+            {"id": "turbo6", "label": "A · 6 step"},
+        ],
+    },
+    "h3-ultrafast-int8": {
+        "cls": "UltraFast", "switch": "ultrafast", "label": "H3 UltraFast INT8 + M3 (GPU)",
+        "note": "6 step con Turbo LoRA, M3 di default a 0,6 (su INT8 mai provata). Su Colab il profilo NVFP4 a 672×384 ha fatto 5 s in 16 s di workflow, più l'avvio a freddo.",
+        "resolutions": ULTRAFAST_RESOLUTIONS, "m3": True,
+    },
+    "h3-prism": {
+        "cls": "Generator", "switch": "gpu", "label": "H3 PRISM (GPU)",
+        "note": "Misurato: 5 s a 1344×768 e 8 step in circa 3 min (circa 0,22 $) a freddo. 6 step: circa 25% di sampling in meno, qualità da confrontare.",
+        "resolutions": PRISM_RESOLUTIONS, "steps": [8, 6],
+    },
+    "h3-quality-bf16": {
+        "cls": "Quality", "switch": "bf16", "label": "H3 Quality BF16 (GPU)",
+        "note": "Modello completo. Stime a 1344×768: Native 20 step circa 6 min per 5 s e 27 min per 15 s (circa 1,60 $); 40 step il doppio. Balanced 8 e Velocissima 4 usano LoRA LightX2V e solo 1344×768.",
+        "resolutions": QUALITY_RESOLUTIONS,
+        "profiles": [
+            {"id": "native20", "label": "Quality · 20 step"},
+            {"id": "native30", "label": "Quality · 30 step"},
+            {"id": "native40", "label": "Quality · 40 step"},
+            {"id": "balanced8", "label": "Balanced · LightX2V 8 step", "resolutions": ["1344x768"]},
+            {"id": "fast4", "label": "Velocissima · LightX2V 4 step", "resolutions": ["1344x768"]},
+        ],
+    },
+}
+SWITCHES = {"gpu": lambda: GPU_ENABLED, "ultrafast": lambda: ULTRAFAST_ENABLED, "bf16": lambda: BF16_ENABLED}
+
+
 def available_models() -> list[dict]:
-    models = [
+    models = []
+    for model_id, spec in GPU_MODELS.items():
+        if not SWITCHES[spec["switch"]]():
+            continue
+        entry = {"id": model_id, "label": spec["label"], "note": spec["note"], "resolutions": list(spec["resolutions"])}
+        if spec.get("m3"):
+            entry["m3"] = M3_CHOICES
+        if spec.get("steps"):
+            entry["steps"] = spec["steps"]
+        if spec.get("profiles"):
+            entry["profiles"] = [
+                {"id": p["id"], "label": p["label"], "resolutions": p.get("resolutions", list(spec["resolutions"])),
+                 **({"m3": M3_CHOICES} if p.get("m3") else {})}
+                for p in spec["profiles"]
+            ]
+        models.append(entry)
+    models.append(
         {
             "id": "test",
             "label": "Video di prova (gratuito)",
             "note": "Barre colorate generate su CPU: serve a collaudare il percorso.",
             "resolutions": [],
         }
-    ]
-    if GPU_ENABLED:
-        models.insert(
-            0,
-            {
-                "id": "h3-prism",
-                "label": "H3 PRISM (GPU)",
-                "note": "Stima dal pilota, a freddo, 1344×768: 5 s in circa 3 min (0,19 $), 15 s in circa 12 min (0,75 $).",
-                "resolutions": list(PRISM_RESOLUTIONS),
-            },
-        )
-    if ULTRAFAST_ENABLED:
-        models.insert(
-            0,
-            {
-                "id": "h3-ultrafast-int8",
-                "label": "H3 UltraFast INT8 + M3 (GPU)",
-                "note": "6 step con Turbo LoRA, LoRA M3 di default a 0,6. Mai misurato su Modal: su Colab il profilo NVFP4 a 672×384 ha fatto 5 s in 16 s di workflow, più l'avvio a freddo.",
-                "resolutions": list(ULTRAFAST_RESOLUTIONS),
-                "m3": M3_CHOICES,
-            },
-        )
+    )
     return models
 
 
@@ -181,6 +219,8 @@ def api():
         backend: str = "auto"
         resolution: str | None = None
         m3_strength: float | None = None
+        profile: str | None = None
+        steps: int | None = None
         seed: int | None = None
 
     class ScreenwriterRequest(BaseModel):
@@ -197,6 +237,7 @@ def api():
             "ok": True,
             "gpu_enabled": GPU_ENABLED,
             "ultrafast_enabled": ULTRAFAST_ENABLED,
+            "bf16_enabled": BF16_ENABLED,
             "models": available_models(),
             "screenwriter": {"enabled": bool(llm_key), "model": LLM_MODEL, "prompt": _prompt_source()},
         }
@@ -289,34 +330,45 @@ def api():
             call = generate.spawn(req.prompt, req.duration, req.model, req.seed)
             return {"job_id": call.object_id, "backend": "modal", "model": "test"}
 
-        if req.model == "h3-ultrafast-int8":
-            resolution = req.resolution or "896x512"
-            if resolution not in ULTRAFAST_RESOLUTIONS:
-                raise HTTPException(400, f"Risoluzione non ammessa: {resolution}")
+        spec = GPU_MODELS[req.model]
+        entry = next(m for m in available_models() if m["id"] == req.model)
+        config = {"prompt": req.prompt, "duration": req.duration}
+        profile = None
+        if entry.get("profiles"):
+            profiles = {p["id"]: p for p in entry["profiles"]}
+            profile = profiles.get(req.profile or entry["profiles"][0]["id"])
+            if profile is None:
+                raise HTTPException(400, f"Profilo non ammesso: {req.profile}")
+            config["profile"] = profile["id"]
+        elif req.profile:
+            raise HTTPException(400, "Questo modello non ha profili")
+        resolutions = profile["resolutions"] if profile else entry["resolutions"]
+        resolution = req.resolution or resolutions[0]
+        if resolution not in resolutions:
+            raise HTTPException(400, f"Risoluzione non ammessa: {resolution}")
+        config["width"], config["height"] = (int(v) for v in resolution.split("x"))
+        m3_allowed = bool((profile or entry).get("m3"))
+        if m3_allowed:
             m3 = M3_CHOICES[0] if req.m3_strength is None else req.m3_strength
             if not 0 <= m3 <= 2:
                 raise HTTPException(400, "Intensità M3: da 0 a 2")
-            if req.seed is not None and req.seed >= 2**32:
-                raise HTTPException(400, "Seed UltraFast: da 0 a 2^32-1")
-            width, height = ULTRAFAST_RESOLUTIONS[resolution]
-            seed = req.seed if req.seed is not None else random.randrange(2**32)
-            worker = modal.Cls.from_name(GPU_APP_NAME, "UltraFast")
-            call = worker().generate.spawn(
-                {"prompt": req.prompt, "duration": req.duration, "width": width, "height": height, "seed": seed,
-                 "m3_strength": m3}
-            )
-            return {"job_id": call.object_id, "backend": "modal", "model": req.model, "seed": seed}
-
-        resolution = req.resolution or "1344x768"
-        if resolution not in PRISM_RESOLUTIONS:
-            raise HTTPException(400, f"Risoluzione non ammessa: {resolution}")
-        width, height = PRISM_RESOLUTIONS[resolution]
-        seed = req.seed if req.seed is not None else random.randrange(2**31)
-        generator = modal.Cls.from_name(GPU_APP_NAME, "Generator")
-        call = generator().generate.spawn(
-            {"prompt": req.prompt, "duration": req.duration, "width": width, "height": height, "seed": seed}
-        )
-        return {"job_id": call.object_id, "backend": "modal", "model": req.model, "seed": seed}
+            config["m3_strength"] = m3
+        elif req.m3_strength:
+            raise HTTPException(400, "La LoRA M3 non è prevista per questo modello o profilo")
+        if entry.get("steps"):
+            steps = req.steps or entry["steps"][0]
+            if steps not in entry["steps"]:
+                raise HTTPException(400, f"Step non ammessi: {steps}")
+            config["steps"] = steps
+        elif req.steps:
+            raise HTTPException(400, "Questo modello non ha la scelta degli step")
+        limit = 2**31 if req.model == "h3-prism" else 2**32
+        if req.seed is not None and req.seed >= limit:
+            raise HTTPException(400, f"Seed: da 0 a {limit - 1}")
+        config["seed"] = req.seed if req.seed is not None else random.randrange(limit)
+        worker = modal.Cls.from_name(GPU_APP_NAME, spec["cls"])
+        call = worker().generate.spawn(config)
+        return {"job_id": call.object_id, "backend": "modal", "model": req.model, "seed": config["seed"]}
 
     @web.get("/jobs/{job_id}")
     def job_status(job_id: str):
