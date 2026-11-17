@@ -45,8 +45,11 @@
           </label>
           <label>Modello
             <select id="model">
-              <option value="h3-ultrafast">H3 UltraFast</option>
+              <option value="test">Video di prova (gratuito)</option>
             </select>
+          </label>
+          <label id="resolution-field" hidden>Risoluzione
+            <select id="resolution"></select>
           </label>
           <label>Backend
             <select id="backend">
@@ -55,6 +58,7 @@
             </select>
           </label>
         </div>
+        <p id="model-note" class="hint"></p>
         <button id="submit" type="submit">Genera</button>
       </form>
     </section>
