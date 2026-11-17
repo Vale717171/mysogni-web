@@ -24,8 +24,6 @@ ULTRAFAST_RESOLUTIONS = {"896x512": (896, 512), "672x384": (672, 384)}
 M3_CHOICES = [0.6, 1.0, 0.0]  # il primo è il predefinito
 ALLOWED_ORIGINS = [
     "https://vale717171.github.io",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
 ]
 
 # Letta in locale al deploy e copiata nell'immagine, così vale anche dentro i container.
@@ -398,10 +396,15 @@ def api():
             try:
                 job_id = google.start(config)
                 return {"job_id": job_id, "backend": "google", "model": req.model, "seed": config["seed"]}
-            except Exception as exc:
+            except google_backend.Uncertain as exc:
+                # Esito ignoto: niente ripiego su Modal (rischio di doppia generazione). La pagina segue il lavoro
+                # e il router lo ritrova tra le esecuzioni, oppure lo dichiara non partito dopo qualche minuto.
+                return {"job_id": str(exc), "backend": "google", "model": req.model, "seed": config["seed"],
+                        "uncertain": True}
+            except google_backend.Rejected as exc:
                 if req.backend == "google":
                     raise HTTPException(502, str(exc)[:400])
-                # "auto": se Google rifiuta (GPU non disponibile, crediti, quota) si passa a Modal.
+                # "auto": rifiuto esplicito di Google (GPU, quota, tetto di spesa, credenziali): si passa a Modal.
         worker = modal.Cls.from_name(GPU_APP_NAME, spec["cls"])
         call = worker().generate.spawn(config)
         return {"job_id": call.object_id, "backend": "modal", "model": req.model, "seed": config["seed"]}
