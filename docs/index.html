@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <title>MySogni Web</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
   <main>
@@ -29,6 +29,9 @@
         <button id="copy-setup-link" type="button" class="secondary">Copia link di configurazione</button>
       </div>
       <p id="settings-status" class="status" role="status"></p>
+      <label id="setup-link-field" hidden>Link di configurazione (contiene il token)
+        <input id="setup-link" type="text" readonly>
+      </label>
     </section>
 
     <section>
@@ -70,6 +73,6 @@
       <ol id="jobs"></ol>
     </section>
   </main>
-  <script src="app.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

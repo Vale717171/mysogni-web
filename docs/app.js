@@ -122,12 +122,32 @@ $("copy-setup-link").addEventListener("click", async () => {
   const base = location.origin + location.pathname;
   let link = `${base}#token=${encodeURIComponent(settings.apiToken)}`;
   if (apiBase() !== DEFAULT_API) link += `&api=${encodeURIComponent(apiBase())}`;
+
+  // Il link resta visibile nel campo qui sotto: se la copia automatica fallisce, si copia a mano.
+  const field = $("setup-link");
+  field.value = link;
+  $("setup-link-field").hidden = false;
+  field.focus();
+  field.select();
+
+  let copied = false;
   try {
     await navigator.clipboard.writeText(link);
-    setStatus(status, "Link copiato. Contiene il token: conservalo nel password manager, non condividerlo.");
+    copied = true;
   } catch {
-    setStatus(status, "Il browser non permette di copiare negli appunti.", true);
+    try {
+      copied = document.execCommand("copy");
+    } catch {
+      copied = false;
+    }
   }
+  setStatus(
+    status,
+    copied
+      ? "Link copiato negli appunti. Contiene il token: conservalo nel password manager."
+      : "Copia automatica non riuscita: il link è selezionato qui sotto, copialo con Ctrl+C (Cmd+C su Mac).",
+    !copied
+  );
 });
 
 $("test-settings").addEventListener("click", async () => {
