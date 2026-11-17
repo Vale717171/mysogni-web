@@ -36,6 +36,8 @@ LLM_MODEL = os.environ.get("MYSOGNI_LLM_MODEL") or "deepseek-v4-flash-0731"
 app = modal.App(APP_NAME)
 
 outputs = modal.Volume.from_name("mysogni-web-outputs", create_if_missing=True)
+# Configurazione privata (system prompt dello screenwriter), scritta dal workflow del repository privato mysogni-gpu.
+private_config = modal.Volume.from_name("mysogni-private-config", create_if_missing=True)
 
 web_image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -123,7 +125,7 @@ def _cleanup_old_outputs() -> None:
 # Il proxy token di Modal non si usa qui perché blocca la richiesta preliminare CORS del browser.
 @app.function(
     image=web_image,
-    volumes={OUTPUT_DIR: outputs},
+    volumes={OUTPUT_DIR: outputs, "/config": private_config},
     secrets=[modal.Secret.from_name("mysogni-web-auth"), modal.Secret.from_name("mysogni-web-llm")],
     timeout=120,
 )
@@ -175,13 +177,31 @@ def api():
             "ok": True,
             "gpu_enabled": GPU_ENABLED,
             "models": available_models(),
-            "screenwriter": {"enabled": bool(llm_key), "model": LLM_MODEL},
+            "screenwriter": {"enabled": bool(llm_key), "model": LLM_MODEL, "prompt": _prompt_source()},
         }
+
+    def _reload_config() -> None:
+        try:
+            private_config.reload()
+        except Exception:
+            pass  # fuori da Modal (prove locali) o Volume non ancora popolato: si usa il prompt di riserva
+
+    def _prompt_source() -> str:
+        from screenwriter import system_prompt
+
+        _reload_config()
+        return system_prompt()[1]
 
     @web.post("/screenwriter")
     async def screenwriter(req: ScreenwriterRequest):
         import httpx
         from screenwriter import build_messages, clean_output
+
+        try:
+            await private_config.reload.aio()
+        except Exception:
+            pass
+        messages, prompt_source = build_messages(req.idea, req.duration)
 
         if req.duration not in ALLOWED_DURATIONS:
             raise HTTPException(400, f"Durata non ammessa: {req.duration}")
@@ -189,7 +209,7 @@ def api():
             raise HTTPException(503, "Screenwriter non configurato: manca la chiave di Cheaper Inference")
         body = {
             "model": LLM_MODEL,
-            "messages": build_messages(req.idea, req.duration),
+            "messages": messages,
             "temperature": 0.7,
             "max_tokens": 4000,
             "zdr": True,  # zero data retention: solo fornitori che non conservano richieste e risposte
@@ -217,11 +237,11 @@ def api():
                 )
             raise HTTPException(502, f"Cheaper Inference ha risposto {r.status_code} {code}: {message[:200]}".strip())
         try:
-            text = r.json()["choices"][0]["message"].get("content") or ""
-            prompt = clean_output(text, req.duration)
+            choice = r.json()["choices"][0]
+            prompt = clean_output(choice["message"].get("content") or "", req.duration, choice.get("finish_reason"))
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise HTTPException(502, f"Risposta del modello non utilizzabile: {exc}")
-        return {"prompt": prompt, "model": LLM_MODEL, "duration": req.duration}
+        return {"prompt": prompt, "model": LLM_MODEL, "duration": req.duration, "prompt_source": prompt_source}
 
     @web.post("/jobs")
     def create_job(req: JobRequest):
