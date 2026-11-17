@@ -402,6 +402,13 @@ function doneText(data, elapsed) {
   if (t.total_s != null) parts.push(`worker ${t.total_s} s`);
   if (t.sampling_s != null) parts.push(`sampling ${t.sampling_s} s`);
   if (t.workflow_s != null) parts.push(`workflow ${t.workflow_s} s`);
+  // Avvio a freddo: attesa prima che il container esistesse (GPU libera, immagine), poi avvio del container fino al lavoro.
+  if (elapsed != null && t.container_age_s != null) {
+    const waiting = Math.max(0, Math.round(elapsed - t.container_age_s));
+    const boot = Math.max(0, Math.round(t.container_age_s - (t.total_s || 0)));
+    parts.push(`attesa GPU/immagine ~${waiting} s`);
+    if (data.cold) parts.push(`avvio container ${boot} s` + (t.comfy_start_s != null ? ` (ComfyUI ${Math.round(t.comfy_start_s)} s)` : ""));
+  }
   if (data.m3_strength != null) parts.push(data.m3_strength > 0 ? `M3 ${data.m3_strength}${data.m3_applied ? "" : " NON verificata"}` : "M3 spenta");
   if (data.lora_applied === false) parts.push("Turbo LoRA non verificata");
   if (data.profile) parts.push(data.profile);
