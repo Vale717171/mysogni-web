@@ -29,6 +29,11 @@ jobs:
       MYSOGNI_ULTRAFAST_ENABLED: ${{ vars.MYSOGNI_ULTRAFAST_ENABLED || '0' }}
       # Famiglia BF16 (UltraFast BF16 e Quality): solo dopo aver scaricato i pesi BF16 in mysogni-gpu.
       MYSOGNI_BF16_ENABLED: ${{ vars.MYSOGNI_BF16_ENABLED || '0' }}
+      # Google Cloud: progetto e budget mensile dei crediti (stima del router); chiave nel secret GCP_ROUTER_KEY.
+      MYSOGNI_GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+      MYSOGNI_GCP_REGION: ${{ vars.GCP_REGION }}
+      MYSOGNI_GCP_BUDGET_USD: ${{ vars.GCP_BUDGET_USD }}
+      GCP_ROUTER_KEY: ${{ secrets.GCP_ROUTER_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,6 +51,13 @@ jobs:
           printf 'API_TOKEN=%s\n' "$MYSOGNI_API_TOKEN" > "$RUNNER_TEMP/auth.env"
           modal secret create mysogni-web-auth --from-dotenv "$RUNNER_TEMP/auth.env" --force > /dev/null
           rm -f "$RUNNER_TEMP/auth.env"
+      - name: Aggiorna la chiave Google su Modal (segnaposto se manca)
+        run: |
+          umask 077
+          if [ -n "$GCP_ROUTER_KEY" ]; then VALUE=$(printf '%s' "$GCP_ROUTER_KEY" | base64 -w0); else VALUE=unset; fi
+          printf 'GCP_KEY_B64=%s\n' "$VALUE" > "$RUNNER_TEMP/gcp.env"
+          modal secret create mysogni-web-gcp --from-dotenv "$RUNNER_TEMP/gcp.env" --force > /dev/null
+          rm -f "$RUNNER_TEMP/gcp.env"
       - name: Aggiorna la chiave dello screenwriter su Modal
         run: |
           # Se il secret manca, lo screenwriter resta spento ma il resto si pubblica lo stesso.

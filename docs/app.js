@@ -234,6 +234,13 @@ async function loadModels() {
     if (select.dataset.touched && models.some((m) => m.id === current)) select.value = current;
     else if (models.length) select.value = models[0].id;
     updateModelFields();
+    const gcp = data.google || {};
+    const googleOption = $("backend").querySelector('option[value="google"]');
+    googleOption.hidden = !gcp.enabled;
+    googleOption.textContent = gcp.enabled
+      ? `Google Cloud (${(gcp.spent_usd_month || 0).toFixed(2)} di ${gcp.budget_usd} $ questo mese)`
+      : "Google Cloud";
+    if (!gcp.enabled && $("backend").value === "google") $("backend").value = "auto";
     const writer = data.screenwriter || {};
     $("screenwriter").hidden = !writer.enabled;
     $("write-prompt").title = writer.model ? `Modello: ${writer.model}, zero data retention` : "";
@@ -348,7 +355,8 @@ function addJobCard(job) {
 }
 
 function renderMeta(card, job, text) {
-  card.meta.textContent = `${job.duration} s · ${job.model} · ${text}`;
+  const where = job.where ? ` · ${job.where === "google" ? "Google" : "Modal"}` : "";
+  card.meta.textContent = `${job.duration} s · ${job.model}${where} · ${text}`;
 }
 
 function showError(card, text) {
@@ -498,6 +506,7 @@ $("job-form").addEventListener("submit", async (event) => {
       body: JSON.stringify(job),
     });
     const data = await response.json();
+    job.where = data.backend;
     const record = { id: data.job_id, job: { ...job, prompt: job.prompt.slice(0, 2000) }, started: Date.now(), status: "running" };
     saveJob(record);
     renderMeta(card, job, "in coda");
