@@ -68,18 +68,21 @@ async function api(path, options = {}) {
       headers: { ...authHeaders(), ...(options.headers || {}) },
     });
   } catch {
-    throw new Error(
-      "Connessione non riuscita: controlla l'indirizzo del backend."
-    );
+    const error = new Error("Connessione non riuscita: controlla l'indirizzo del backend.");
+    error.status = 0;
+    throw error;
   }
   if (response.status === 401 || response.status === 403) {
-    throw new Error("Token rifiutato: controlla il token di accesso.");
+    const error = new Error("Token rifiutato: controlla il token di accesso.");
+    error.status = response.status;
+    throw error;
   }
   if (!response.ok) {
     let detail = "";
     try { detail = (await response.json()).detail || ""; } catch { /* corpo non JSON */ }
     const text = typeof detail === "object" && detail ? detail.message || "" : detail;
     const error = new Error(`Errore ${response.status}${text ? ": " + text : ""}`);
+    error.status = response.status;
     if (typeof detail === "object" && detail) error.detail = detail;
     throw error;
   }
@@ -285,6 +288,33 @@ $("write-prompt").addEventListener("click", async () => {
 });
 
 // --- Lavori ---
+// I lavori restano in memoria nel browser (ultimi 20, al massimo 7 giorni, come i video su Modal):
+// dopo un ricaricamento la pagina riprende a seguirli invece di perderli.
+
+const JOBS_KEY = "mysogni-web-jobs";
+const MAX_JOBS = 20;
+const KEEP_MS = 7 * 24 * 3600 * 1000;
+const RETRY_MS = 6000;
+const GIVE_UP_MS = 15 * 60 * 1000; // dopo 15 minuti senza risposte dal router si smette di riprovare
+
+function loadJobs() {
+  try {
+    const list = JSON.parse(localStorage.getItem(JOBS_KEY) || "[]");
+    return Array.isArray(list) ? list.filter((j) => j && j.id && Date.now() - j.started < KEEP_MS) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveJob(record) {
+  try {
+    const list = loadJobs().filter((j) => j.id !== record.id);
+    list.unshift(record);
+    localStorage.setItem(JOBS_KEY, JSON.stringify(list.slice(0, MAX_JOBS)));
+  } catch {
+    // memoria del browser non disponibile: il lavoro resta solo in questa scheda
+  }
+}
 
 function addJobCard(job) {
   $("empty").hidden = true;
@@ -305,6 +335,13 @@ function renderMeta(card, job, text) {
   card.meta.textContent = `${job.duration} s · ${job.model} · ${text}`;
 }
 
+function showError(card, text) {
+  const message = document.createElement("p");
+  message.className = "error";
+  message.textContent = text;
+  card.body.replaceChildren(message);
+}
+
 async function showVideo(card, jobId) {
   const response = await api(`/jobs/${encodeURIComponent(jobId)}/video`);
   const url = URL.createObjectURL(await response.blob());
@@ -319,42 +356,97 @@ async function showVideo(card, jobId) {
   card.body.replaceChildren(video, link);
 }
 
-async function poll(card, job, jobId, started) {
-  try {
-    const data = await (await api(`/jobs/${encodeURIComponent(jobId)}`)).json();
-    const elapsed = Math.round((Date.now() - started) / 1000);
-    if (data.status === "running") {
-      renderMeta(card, job, `in corso, ${elapsed} s`);
-      setTimeout(() => poll(card, job, jobId, started), POLL_MS);
-      return;
-    }
-    if (data.status === "done") {
-      const t = data.timings || {};
-      const parts = [`pronto in ${elapsed} s`];
-      if (t.total_s != null) parts.push(`worker ${t.total_s} s`);
-      if (t.sampling_s != null) parts.push(`sampling ${t.sampling_s} s`);
-      if (t.workflow_s != null) parts.push(`workflow ${t.workflow_s} s`);
-      if (data.m3_strength != null) parts.push(data.m3_strength > 0 ? `M3 ${data.m3_strength}${data.m3_applied ? "" : " NON verificata"}` : "M3 spenta");
-      if (data.lora_applied === false) parts.push("Turbo LoRA non verificata");
-      if (data.resolution) parts.push(data.resolution);
-      if (data.seed != null) parts.push(`seed ${data.seed}`);
-      if (data.cold != null) parts.push(data.cold ? "a freddo" : "a caldo");
-      if (data.fake) parts.push("video di prova");
-      renderMeta(card, job, parts.join(" · "));
+function offerVideo(card, jobId) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary";
+  button.textContent = "Mostra il video";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
       await showVideo(card, jobId);
+    } catch (error) {
+      showError(card, error.status === 404 ? "Video non più disponibile (conservati 7 giorni)." : error.message);
+    }
+  });
+  card.body.replaceChildren(button);
+}
+
+function doneText(data, elapsed) {
+  const t = data.timings || {};
+  const parts = elapsed != null ? [`pronto in ${elapsed} s`] : ["pronto"];
+  if (t.total_s != null) parts.push(`worker ${t.total_s} s`);
+  if (t.sampling_s != null) parts.push(`sampling ${t.sampling_s} s`);
+  if (t.workflow_s != null) parts.push(`workflow ${t.workflow_s} s`);
+  if (data.m3_strength != null) parts.push(data.m3_strength > 0 ? `M3 ${data.m3_strength}${data.m3_applied ? "" : " NON verificata"}` : "M3 spenta");
+  if (data.lora_applied === false) parts.push("Turbo LoRA non verificata");
+  if (data.resolution) parts.push(data.resolution);
+  if (data.seed != null) parts.push(`seed ${data.seed}`);
+  if (data.cold != null) parts.push(data.cold ? "a freddo" : "a caldo");
+  if (data.fake) parts.push("video di prova");
+  return parts.join(" · ");
+}
+
+async function poll(card, record, failingSince = null, showNow = true) {
+  const { job } = record;
+  let data;
+  try {
+    data = await (await api(`/jobs/${encodeURIComponent(record.id)}`)).json();
+  } catch (error) {
+    // Errori temporanei (rete, router riavviato o prelazionato da Modal): il lavoro sulla GPU continua, si riprova.
+    const transient = error.status === 0 || error.status >= 500;
+    const since = failingSince || Date.now();
+    if (transient && Date.now() - since < GIVE_UP_MS) {
+      renderMeta(card, job, `collegamento interrotto, riprovo… (${error.message})`);
+      setTimeout(() => poll(card, record, since, showNow), RETRY_MS);
       return;
     }
-    renderMeta(card, job, data.status === "expired" ? "scaduto" : "errore");
-    const error = document.createElement("p");
-    error.className = "error";
-    error.textContent = data.error ? `Errore nel worker: ${data.error}` : "Il lavoro non è più disponibile.";
-    card.body.replaceChildren(error);
-  } catch (error) {
-    renderMeta(card, job, "errore");
-    const message = document.createElement("p");
-    message.className = "error";
-    message.textContent = error.message;
-    card.body.replaceChildren(message);
+    renderMeta(card, job, "stato sconosciuto");
+    showError(card, `${error.message}. Il lavoro potrebbe essere ancora in corso: ricarica la pagina più tardi.`);
+    return;
+  }
+  const elapsed = Math.round((Date.now() - record.started) / 1000);
+  if (data.status === "running") {
+    renderMeta(card, job, `in corso, ${elapsed} s`);
+    setTimeout(() => poll(card, record, null, showNow), POLL_MS);
+    return;
+  }
+  if (data.status === "done") {
+    const text = doneText(data, record.finished ? null : elapsed);
+    saveJob({ ...record, status: "done", text, finished: record.finished || Date.now() });
+    renderMeta(card, job, text);
+    if (showNow) {
+      try {
+        await showVideo(card, record.id);
+      } catch (error) {
+        showError(card, error.message);
+      }
+    } else {
+      offerVideo(card, record.id);
+    }
+    return;
+  }
+  const text = data.status === "expired" ? "scaduto" : "errore";
+  const message = data.error ? `Errore nel worker: ${data.error}` : "Il lavoro non è più disponibile.";
+  saveJob({ ...record, status: text, text, error: message });
+  renderMeta(card, job, text);
+  showError(card, message);
+}
+
+function restoreJobs() {
+  const list = loadJobs().reverse(); // dal più vecchio, così il più recente finisce in cima
+  for (const record of list) {
+    const card = addJobCard(record.job);
+    if (record.status === "done") {
+      renderMeta(card, record.job, record.text || "pronto");
+      offerVideo(card, record.id);
+    } else if (record.status === "errore" || record.status === "scaduto") {
+      renderMeta(card, record.job, record.status);
+      showError(card, record.error || "Errore");
+    } else {
+      renderMeta(card, record.job, "riprendo a seguirlo…");
+      poll(card, record, null, false);
+    }
   }
 }
 
@@ -386,14 +478,13 @@ $("job-form").addEventListener("submit", async (event) => {
       body: JSON.stringify(job),
     });
     const data = await response.json();
+    const record = { id: data.job_id, job: { ...job, prompt: job.prompt.slice(0, 2000) }, started: Date.now(), status: "running" };
+    saveJob(record);
     renderMeta(card, job, "in coda");
-    poll(card, job, data.job_id, Date.now());
+    poll(card, record);
   } catch (error) {
     renderMeta(card, job, "errore");
-    const message = document.createElement("p");
-    message.className = "error";
-    message.textContent = error.message;
-    card.body.replaceChildren(message);
+    showError(card, error.message);
   } finally {
     submit.disabled = false;
   }
@@ -413,3 +504,4 @@ if (setupResult !== null) {
 }
 updateModelFields();
 loadModels();
+if (configured()) restoreJobs();

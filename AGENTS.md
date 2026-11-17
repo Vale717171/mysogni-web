@@ -10,6 +10,8 @@ Pagina web (GitHub Pages) per generare video con MiniMax H3 su GPU remote. Il pi
 - Lavora su un ramo separato e apri una pull request; `main` pubblica in automatico pagina e backend.
 - Distingui sempre tra prova simulata (worker finto), prova reale e ipotesi.
 
+- La pagina conserva nel browser gli ultimi 20 lavori (al massimo 7 giorni) e dopo un ricaricamento riprende a seguirli. Gli errori temporanei del router (rete, 5xx, prelazione) non chiudono il lavoro: la pagina riprova per 15 minuti. Il router è `nonpreemptible`.
+
 ## Mappa
 
 - `docs/`: la pagina statica pubblicata da `.github/workflows/pages.yml`.
