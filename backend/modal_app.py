@@ -47,6 +47,7 @@ GCP = {
     "MYSOGNI_GCP_REGION": os.environ.get("MYSOGNI_GCP_REGION", "") or "europe-west4",
     "MYSOGNI_GCP_BUDGET_USD": os.environ.get("MYSOGNI_GCP_BUDGET_USD", "") or "8.5",
     "MYSOGNI_GCP_AUTO": os.environ.get("MYSOGNI_GCP_AUTO", ""),
+    "MYSOGNI_GCP_CREDITS": os.environ.get("MYSOGNI_GCP_CREDITS", ""),
 }
 # Configurazione privata (system prompt dello screenwriter), scritta dal workflow del repository privato mysogni-gpu.
 private_config = modal.Volume.from_name("mysogni-private-config", create_if_missing=True)
@@ -259,6 +260,7 @@ def api():
                 "models": sorted(google_backend.MODELS),
                 "budget_usd": google_backend.BUDGET_USD,
                 "auto": google_backend.AUTO,
+                "credits_eur_left": google.credits_left() if google_backend.enabled() else None,
                 "spent_usd_month": google.spent_usd() if google_backend.enabled() else 0,
             },
         }

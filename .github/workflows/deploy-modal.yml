@@ -35,6 +35,8 @@ jobs:
       MYSOGNI_GCP_BUDGET_USD: ${{ vars.GCP_BUDGET_USD }}
       # "1" = Automatico usa Google per primo; altrimenti Google solo se scelto esplicitamente nella pagina.
       MYSOGNI_GCP_AUTO: ${{ vars.GCP_AUTO }}
+      # Saldo di partenza per il contatore dei crediti nella pagina: "<euro>@<AAAA-MM-GG>+<accredito mensile>".
+      MYSOGNI_GCP_CREDITS: ${{ vars.GCP_CREDITS }}
       GCP_ROUTER_KEY: ${{ secrets.GCP_ROUTER_KEY }}
     steps:
       - uses: actions/checkout@v4

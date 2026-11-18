@@ -240,6 +240,13 @@ async function loadModels() {
     googleOption.textContent = gcp.enabled
       ? `Google Cloud (${(gcp.spent_usd_month || 0).toFixed(2)} di ${gcp.budget_usd} $ questo mese)`
       : "Google Cloud";
+    // Crediti Google rimasti: stima del router (durata dei lavori × tariffa), la cifra vera è nella console Google.
+    const credits = $("google-credits");
+    credits.hidden = !gcp.enabled;
+    if (gcp.enabled) {
+      const left = gcp.credits_eur_left != null ? ` · crediti rimasti ~${gcp.credits_eur_left.toFixed(2)} €` : "";
+      credits.textContent = `Google: spesi ~${(gcp.spent_usd_month || 0).toFixed(2)} di ${gcp.budget_usd} $ questo mese${left} (stima)`;
+    }
     if (!gcp.enabled && $("backend").value === "google") $("backend").value = "auto";
     $("backend").querySelector('option[value="auto"]').textContent =
       gcp.enabled && gcp.auto ? "Automatico (prima Google, poi Modal)" : "Automatico (Modal)";
@@ -419,6 +426,8 @@ function doneText(data, elapsed) {
   if (data.seed != null) parts.push(`seed ${data.seed}`);
   if (data.cold != null) parts.push(data.cold ? "a freddo" : "a caldo");
   if (data.fake) parts.push("video di prova");
+  if (data.cost_usd != null) parts.push(`costo ~${data.cost_usd.toFixed(2)} $`);
+  if (data.credits_eur_left != null) parts.push(`crediti Google ~${data.credits_eur_left.toFixed(2)} €`);
   return parts.join(" · ");
 }
 
@@ -450,6 +459,7 @@ async function poll(card, record, failingSince = null, showNow = true) {
     const text = doneText(data, record.finished ? null : elapsed);
     saveJob({ ...record, status: "done", text, finished: record.finished || Date.now() });
     renderMeta(card, job, text);
+    if (data.backend === "google" && !record.finished) loadModels(); // aggiorna spesa e crediti
     if (showNow) {
       try {
         await showVideo(card, record.id);
