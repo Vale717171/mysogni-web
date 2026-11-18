@@ -20,7 +20,13 @@ BUDGET_USD = float(os.environ.get("MYSOGNI_GCP_BUDGET_USD") or 8.5)
 # RTX PRO 6000 senza ridondanza di zona + 20 vCPU + 80 GiB (minimi imposti), circa, in USD/ora.
 RATE_USD_H = float(os.environ.get("MYSOGNI_GCP_RATE_USD_H") or 3.9)
 MODELS = {"h3-turbo-bf16"}
-RESERVE_S = 330  # costo prenotato all'avvio (circa un 10 s a freddo), corretto a lavoro concluso
+# "Automatico" usa Google solo se attivato (variabile GCP_AUTO=1): la prima prova reale non ha finito in tempo.
+AUTO = os.environ.get("MYSOGNI_GCP_AUTO", "") == "1"
+# Limite del task Cloud Run (--task-timeout in gcp-deploy.yml di mysogni-gpu): va tenuto uguale.
+TASK_TIMEOUT_S = 1800
+# All'avvio si prenota il caso peggiore (il lavoro può durare fino al limite), corretto a lavoro concluso.
+# Un lavoro mai più seguito dalla pagina resta prenotato per intero: la stima sbaglia per eccesso, mai per difetto.
+RESERVE_S = TASK_TIMEOUT_S
 LOOKUP_GRACE_S = 180  # dopo un invio dall'esito incerto: tempo massimo per trovare l'esecuzione
 
 
@@ -81,7 +87,8 @@ class Google:
         return round(seconds * RATE_USD_H / 3600, 2)
 
     def has_budget(self) -> bool:
-        return self.spent_usd() < BUDGET_USD
+        """C'è posto per un altro lavoro nel caso peggiore (durata pari al limite del task)?"""
+        return self.spent_usd() + RESERVE_S * RATE_USD_H / 3600 <= BUDGET_USD
 
     def _reserve(self, job_id: str):
         month = self._month()

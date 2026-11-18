@@ -46,6 +46,7 @@ GCP = {
     "MYSOGNI_GCP_PROJECT": os.environ.get("MYSOGNI_GCP_PROJECT", ""),
     "MYSOGNI_GCP_REGION": os.environ.get("MYSOGNI_GCP_REGION", "") or "europe-west4",
     "MYSOGNI_GCP_BUDGET_USD": os.environ.get("MYSOGNI_GCP_BUDGET_USD", "") or "8.5",
+    "MYSOGNI_GCP_AUTO": os.environ.get("MYSOGNI_GCP_AUTO", ""),
 }
 # Configurazione privata (system prompt dello screenwriter), scritta dal workflow del repository privato mysogni-gpu.
 private_config = modal.Volume.from_name("mysogni-private-config", create_if_missing=True)
@@ -257,6 +258,7 @@ def api():
                 "region": google_backend.REGION,
                 "models": sorted(google_backend.MODELS),
                 "budget_usd": google_backend.BUDGET_USD,
+                "auto": google_backend.AUTO,
                 "spent_usd_month": google.spent_usd() if google_backend.enabled() else 0,
             },
         }
@@ -385,14 +387,14 @@ def api():
         if req.seed is not None and req.seed >= limit:
             raise HTTPException(400, f"Seed: da 0 a {limit - 1}")
         config["seed"] = req.seed if req.seed is not None else random.randrange(limit)
-        # Google: solo i modelli portati su Cloud Run; "auto" lo preferisce finché c'è budget dei crediti.
+        # Google: solo i modelli portati su Cloud Run; "auto" lo preferisce (se GCP_AUTO=1) finché c'è budget.
         google_ok = google_backend.enabled() and req.model in google_backend.MODELS
         if req.backend == "google":
             if not google_ok:
                 raise HTTPException(400, "Google Cloud non disponibile per questo modello")
             if not google.has_budget():
                 raise HTTPException(400, f"Budget mensile Google esaurito (stima {google.spent_usd()} $)")
-        if req.backend == "google" or (req.backend == "auto" and google_ok and google.has_budget()):
+        if req.backend == "google" or (req.backend == "auto" and google_backend.AUTO and google_ok and google.has_budget()):
             try:
                 job_id = google.start(config)
                 return {"job_id": job_id, "backend": "google", "model": req.model, "seed": config["seed"]}

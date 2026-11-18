@@ -241,6 +241,8 @@ async function loadModels() {
       ? `Google Cloud (${(gcp.spent_usd_month || 0).toFixed(2)} di ${gcp.budget_usd} $ questo mese)`
       : "Google Cloud";
     if (!gcp.enabled && $("backend").value === "google") $("backend").value = "auto";
+    $("backend").querySelector('option[value="auto"]').textContent =
+      gcp.enabled && gcp.auto ? "Automatico (prima Google, poi Modal)" : "Automatico (Modal)";
     const writer = data.screenwriter || {};
     $("screenwriter").hidden = !writer.enabled;
     $("write-prompt").title = writer.model ? `Modello: ${writer.model}, zero data retention` : "";
