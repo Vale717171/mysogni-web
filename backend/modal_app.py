@@ -24,8 +24,6 @@ ULTRAFAST_RESOLUTIONS = {"896x512": (896, 512), "672x384": (672, 384)}
 M3_CHOICES = [0.6, 1.0, 0.0]  # il primo è il predefinito
 ALLOWED_ORIGINS = [
     "https://vale717171.github.io",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
 ]
 
 # Letta in locale al deploy e copiata nell'immagine, così vale anche dentro i container.
@@ -48,6 +46,7 @@ GCP = {
     "MYSOGNI_GCP_PROJECT": os.environ.get("MYSOGNI_GCP_PROJECT", ""),
     "MYSOGNI_GCP_REGION": os.environ.get("MYSOGNI_GCP_REGION", "") or "europe-west4",
     "MYSOGNI_GCP_BUDGET_USD": os.environ.get("MYSOGNI_GCP_BUDGET_USD", "") or "8.5",
+    "MYSOGNI_GCP_AUTO": os.environ.get("MYSOGNI_GCP_AUTO", ""),
 }
 # Configurazione privata (system prompt dello screenwriter), scritta dal workflow del repository privato mysogni-gpu.
 private_config = modal.Volume.from_name("mysogni-private-config", create_if_missing=True)
@@ -259,6 +258,7 @@ def api():
                 "region": google_backend.REGION,
                 "models": sorted(google_backend.MODELS),
                 "budget_usd": google_backend.BUDGET_USD,
+                "auto": google_backend.AUTO,
                 "spent_usd_month": google.spent_usd() if google_backend.enabled() else 0,
             },
         }
@@ -387,21 +387,26 @@ def api():
         if req.seed is not None and req.seed >= limit:
             raise HTTPException(400, f"Seed: da 0 a {limit - 1}")
         config["seed"] = req.seed if req.seed is not None else random.randrange(limit)
-        # Google: solo i modelli portati su Cloud Run; "auto" lo preferisce finché c'è budget dei crediti.
+        # Google: solo i modelli portati su Cloud Run; "auto" lo preferisce (se GCP_AUTO=1) finché c'è budget.
         google_ok = google_backend.enabled() and req.model in google_backend.MODELS
         if req.backend == "google":
             if not google_ok:
                 raise HTTPException(400, "Google Cloud non disponibile per questo modello")
             if not google.has_budget():
                 raise HTTPException(400, f"Budget mensile Google esaurito (stima {google.spent_usd()} $)")
-        if req.backend == "google" or (req.backend == "auto" and google_ok and google.has_budget()):
+        if req.backend == "google" or (req.backend == "auto" and google_backend.AUTO and google_ok and google.has_budget()):
             try:
                 job_id = google.start(config)
                 return {"job_id": job_id, "backend": "google", "model": req.model, "seed": config["seed"]}
-            except Exception as exc:
+            except google_backend.Uncertain as exc:
+                # Esito ignoto: niente ripiego su Modal (rischio di doppia generazione). La pagina segue il lavoro
+                # e il router lo ritrova tra le esecuzioni, oppure lo dichiara non partito dopo qualche minuto.
+                return {"job_id": str(exc), "backend": "google", "model": req.model, "seed": config["seed"],
+                        "uncertain": True}
+            except google_backend.Rejected as exc:
                 if req.backend == "google":
                     raise HTTPException(502, str(exc)[:400])
-                # "auto": se Google rifiuta (GPU non disponibile, crediti, quota) si passa a Modal.
+                # "auto": rifiuto esplicito di Google (GPU, quota, tetto di spesa, credenziali): si passa a Modal.
         worker = modal.Cls.from_name(GPU_APP_NAME, spec["cls"])
         call = worker().generate.spawn(config)
         return {"job_id": call.object_id, "backend": "modal", "model": req.model, "seed": config["seed"]}
