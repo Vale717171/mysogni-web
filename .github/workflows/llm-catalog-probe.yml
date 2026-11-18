@@ -1,0 +1,25 @@
+name: Catalogo LLM (temporaneo)
+on:
+  push:
+    branches: [llm-catalog-probe]
+permissions:
+  contents: read
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Modelli Gemma su Cheaper Inference (solo nomi e metadati pubblici)
+        env:
+          KEY: ${{ secrets.CHEAPERINFERENCE_API_KEY }}
+        run: |
+          curl -sS -m 30 -H "Authorization: Bearer $KEY" https://api.cheaperinference.com/v1/models -o models.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open("models.json"))
+          items = d.get("data", d) if isinstance(d, dict) else d
+          print("totale", len(items))
+          for m in items:
+              mid = m.get("id", "") if isinstance(m, dict) else str(m)
+              if "gemma" in mid.lower() or mid.startswith("deepseek-v4-flash-0731"):
+                  print(json.dumps(m)[:1500])
+          PY
