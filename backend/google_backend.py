@@ -11,7 +11,7 @@ import json
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 PROJECT = os.environ.get("MYSOGNI_GCP_PROJECT", "")
 REGION = os.environ.get("MYSOGNI_GCP_REGION") or "europe-west4"
@@ -27,6 +27,12 @@ TASK_TIMEOUT_S = 1800
 # All'avvio si prenota il caso peggiore (il lavoro può durare fino al limite), corretto a lavoro concluso.
 # Un lavoro mai più seguito dalla pagina resta prenotato per intero: la stima sbaglia per eccesso, mai per difetto.
 RESERVE_S = TASK_TIMEOUT_S
+# Contatore dei crediti Google (stima): variabile GCP_CREDITS = "<saldo €>@<data AAAA-MM-GG>+<accredito mensile €>",
+# per esempio "57.7@2026-11-18+8.8". Gli accrediti arrivano il 4 di ogni mese (Google Developer Program) e
+# scadono dopo 12 mesi. La spesa stimata del router (dollari) è convertita con EUR_PER_USD.
+CREDITS = os.environ.get("MYSOGNI_GCP_CREDITS", "").strip()
+EUR_PER_USD = float(os.environ.get("MYSOGNI_EUR_PER_USD") or 0.92)
+GRANT_DAY = 4
 LOOKUP_GRACE_S = 180  # dopo un invio dall'esito incerto: tempo massimo per trovare l'esecuzione
 
 
@@ -47,6 +53,29 @@ def _key() -> dict | None:
         return json.loads(base64.b64decode(raw))
     except Exception:
         return None
+
+
+def parse_credits(raw: str):
+    """"57.7@2026-11-18+8.8" -> (57.7, date(2026, 11, 18), 8.8); None se assente o malformata."""
+    try:
+        balance, rest = raw.split("@", 1)
+        day, monthly = rest.split("+", 1)
+        return float(balance), date.fromisoformat(day), float(monthly)
+    except (ValueError, AttributeError):
+        return None
+
+
+def grants_since(start: date, today: date) -> int:
+    """Accrediti mensili (il giorno GRANT_DAY) arrivati dopo start, fino a oggi compreso."""
+    count = 0
+    year, month = start.year, start.month
+    while True:
+        grant = date(year, month, GRANT_DAY)
+        if grant > today:
+            return count
+        if grant > start:
+            count += 1
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
 
 
 def enabled() -> bool:
@@ -101,14 +130,37 @@ class Google:
             key = f"reserved:{reservation['month']}"
             self.store[key] = max(0.0, self.store.get(key, 0.0) - reservation["seconds"])
 
-    def _record(self, job_id: str, seconds: float):
+    def _record(self, job_id: str, seconds: float) -> float:
+        """Registra la durata del lavoro (una volta sola) e ne restituisce il costo stimato in dollari."""
+        seconds = max(seconds, 0.0)
+        cost = round(seconds * RATE_USD_H / 3600, 2)
         flag = f"billed:{job_id}"
         if self.store.get(flag):
-            return
+            return self.store.get(f"cost:{job_id}", cost)
         self.store[flag] = True
+        self.store[f"cost:{job_id}"] = cost
         self._release(job_id)
         key = f"usage:{self._month()}"
-        self.store[key] = self.store.get(key, 0.0) + max(seconds, 0.0)
+        self.store[key] = self.store.get(key, 0.0) + seconds
+        self.store["usage:total"] = self.store.get("usage:total", 0.0) + seconds
+        return cost
+
+    def credits_left(self) -> float | None:
+        """Crediti Google rimasti, in euro (stima): saldo di partenza + accrediti mensili − spesa stimata da allora.
+        La spesa parte da quando il router vede per la prima volta questo saldo di partenza."""
+        parsed = parse_credits(CREDITS)
+        if parsed is None:
+            return None
+        balance, start, monthly = parsed
+        total = self.store.get("usage:total", 0.0)
+        base_key = f"credits_base:{CREDITS}"
+        base = self.store.get(base_key)
+        if base is None:
+            self.store[base_key] = base = total
+        reserved = self.store.get(f"reserved:{self._month()}", 0.0)
+        spent_eur = (total - base + reserved) * RATE_USD_H / 3600 * EUR_PER_USD
+        today = datetime.now(timezone.utc).date()
+        return round(balance + grants_since(start, today) * monthly - spent_eur, 2)
 
     # --- lavori ---
     def start(self, config: dict) -> str:
@@ -184,8 +236,8 @@ class Google:
         response = self._object(f"{job_id}.json")
         if response.status_code == 200:
             result = response.json()
-            self._record(job_id, self._seconds(self._execution(job_id), info.get("started")))
-            return {**result, "backend": "google"}
+            cost = self._record(job_id, self._seconds(self._execution(job_id), info.get("started")))
+            return {**result, "backend": "google", "cost_usd": cost, "credits_eur_left": self.credits_left()}
         if response.status_code != 404:
             raise RuntimeError(f"Lettura del risultato da Google non riuscita (HTTP {response.status_code})")
         if not info.get("execution"):
@@ -202,8 +254,8 @@ class Google:
                 return {"status": "running", "backend": "google"}
         execution = self._execution(job_id)
         if execution.get("completionTime") and not execution.get("succeededCount"):
-            self._record(job_id, self._seconds(execution, info.get("started")))
-            return {"status": "error", "backend": "google",
+            cost = self._record(job_id, self._seconds(execution, info.get("started")))
+            return {"status": "error", "backend": "google", "cost_usd": cost,
                     "error": "Il lavoro Google si è fermato senza risultato: vedi i log di Cloud Run"}
         return {"status": "running", "backend": "google"}
 
