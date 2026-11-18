@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <title>MySogni Web</title>
-  <link rel="stylesheet" href="style.css?v=11">
+  <link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
   <main>
@@ -39,6 +39,9 @@
         <div id="screenwriter" hidden>
           <label>Idea in italiano
             <textarea id="idea" rows="3" maxlength="4000" placeholder="Es.: una giovane donna entra in un ristorante e si siede a un tavolo"></textarea>
+          </label>
+          <label id="writer-model-field" hidden>Modello dello screenwriter
+            <select id="writer-model"></select>
           </label>
           <div class="row">
             <button id="write-prompt" type="button" class="secondary">Scrivi il prompt H3</button>
@@ -93,6 +96,6 @@
       <ol id="jobs"></ol>
     </section>
   </main>
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>

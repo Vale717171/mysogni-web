@@ -36,6 +36,11 @@ BF16_ENABLED = GPU_ENABLED and os.environ.get("MYSOGNI_BF16_ENABLED", "0") == "1
 # Screenwriter: modello linguistico via Cheaper Inference (API compatibile OpenAI), sempre con zero data retention.
 LLM_BASE_URL = os.environ.get("MYSOGNI_LLM_BASE_URL") or "https://api.cheaperinference.com/v1"
 LLM_MODEL = os.environ.get("MYSOGNI_LLM_MODEL") or "deepseek-v4-flash-0731"
+# Modelli scelti nella pagina (id di Cheaper Inference, separati da virgole); il primo è quello predefinito.
+LLM_MODELS = [LLM_MODEL] + [
+    name.strip() for name in (os.environ.get("MYSOGNI_LLM_MODELS") or "gemma-4-31b-it").split(",")
+    if name.strip() and name.strip() != LLM_MODEL
+]
 
 app = modal.App(APP_NAME)
 
@@ -63,6 +68,7 @@ web_image = (
             "MYSOGNI_BF16_ENABLED": "1" if BF16_ENABLED else "0",
             "MYSOGNI_LLM_BASE_URL": LLM_BASE_URL,
             "MYSOGNI_LLM_MODEL": LLM_MODEL,
+            "MYSOGNI_LLM_MODELS": ",".join(LLM_MODELS),
         }
     )
     .add_local_file(Path(__file__).parent / "screenwriter.py", "/root/screenwriter.py")
@@ -240,6 +246,7 @@ def api():
     class ScreenwriterRequest(BaseModel):
         idea: str = Field(min_length=1, max_length=4000)
         duration: int = 5
+        model: str | None = None  # uno di LLM_MODELS; assente = predefinito
 
     llm_key = os.environ.get("LLM_API_KEY", "").strip()
     if llm_key == "unset":  # segnaposto scritto dal workflow quando manca il secret GitHub
@@ -253,7 +260,8 @@ def api():
             "ultrafast_enabled": ULTRAFAST_ENABLED,
             "bf16_enabled": BF16_ENABLED,
             "models": available_models(),
-            "screenwriter": {"enabled": bool(llm_key), "model": LLM_MODEL, "prompt": _prompt_source()},
+            "screenwriter": {"enabled": bool(llm_key), "model": LLM_MODEL, "models": LLM_MODELS,
+                             "prompt": _prompt_source()},
             "google": {
                 "enabled": google_backend.enabled(),
                 "region": google_backend.REGION,
@@ -292,8 +300,11 @@ def api():
             raise HTTPException(400, f"Durata non ammessa: {req.duration}")
         if not llm_key:
             raise HTTPException(503, "Screenwriter non configurato: manca la chiave di Cheaper Inference")
+        model = req.model or LLM_MODEL
+        if model not in LLM_MODELS:
+            raise HTTPException(400, f"Modello dello screenwriter non ammesso: {model}")
         body = {
-            "model": LLM_MODEL,
+            "model": model,
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 8000,
@@ -318,7 +329,7 @@ def api():
                 pass
             if code == "zdr_capacity_unavailable":
                 raise HTTPException(
-                    503, f"Nessun fornitore con zero data retention disponibile ora per {LLM_MODEL}: riprova più tardi"
+                    503, f"Nessun fornitore con zero data retention disponibile ora per {model}: riprova più tardi"
                 )
             raise HTTPException(502, f"Cheaper Inference ha risposto {r.status_code} {code}: {message[:200]}".strip())
         raw, finish = "", None
@@ -334,7 +345,7 @@ def api():
                 {"message": f"Risposta del modello non utilizzabile: {exc}", "finish_reason": finish,
                  "raw": raw[:12000] if isinstance(raw, str) else None},
             )
-        return {"prompt": prompt, "model": LLM_MODEL, "duration": req.duration, "prompt_source": prompt_source}
+        return {"prompt": prompt, "model": model, "duration": req.duration, "prompt_source": prompt_source}
 
     @web.post("/jobs")
     def create_job(req: JobRequest):
