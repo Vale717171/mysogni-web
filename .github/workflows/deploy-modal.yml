@@ -23,6 +23,8 @@ jobs:
       MYSOGNI_API_TOKEN: ${{ secrets.MYSOGNI_API_TOKEN }}
       CHEAPERINFERENCE_API_KEY: ${{ secrets.CHEAPERINFERENCE_API_KEY }}
       MYSOGNI_LLM_MODEL: ${{ vars.MYSOGNI_LLM_MODEL }}
+      # Altri modelli scelti nella pagina, separati da virgole (predefinito: gemma-4-31b-it).
+      MYSOGNI_LLM_MODELS: ${{ vars.MYSOGNI_LLM_MODELS }}
       # Interruttore della spesa GPU: variabile di repository, assente = spento.
       MYSOGNI_GPU_ENABLED: ${{ vars.MYSOGNI_GPU_ENABLED || '0' }}
       # UltraFast: secondo interruttore, da accendere solo dopo aver scaricato i pesi in mysogni-gpu.

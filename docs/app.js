@@ -252,7 +252,13 @@ async function loadModels() {
       gcp.enabled && gcp.auto ? "Automatico (prima Google, poi Modal)" : "Automatico (Modal)";
     const writer = data.screenwriter || {};
     $("screenwriter").hidden = !writer.enabled;
-    $("write-prompt").title = writer.model ? `Modello: ${writer.model}, zero data retention` : "";
+    const writerModels = writer.models && writer.models.length ? writer.models : writer.model ? [writer.model] : [];
+    const writerSelect = $("writer-model");
+    const savedWriter = localStorage.getItem(WRITER_KEY);
+    writerSelect.replaceChildren(...writerModels.map((name) => new Option(WRITER_LABELS[name] || name, name)));
+    if (writerModels.includes(savedWriter)) writerSelect.value = savedWriter;
+    $("writer-model-field").hidden = writerModels.length < 2;
+    $("write-prompt").title = "Zero data retention: solo fornitori che non conservano richieste e risposte";
   } catch {
     // La pagina resta utilizzabile con il solo video di prova.
   }
@@ -268,6 +274,11 @@ $("model").addEventListener("change", () => {
 // --- Screenwriter ---
 
 let writtenFor = null; // durata per cui è stato scritto il prompt attuale
+const WRITER_KEY = "mysogni-web-writer-model";
+const WRITER_LABELS = {
+  "deepseek-v4-flash-0731": "DeepSeek V4 Flash",
+  "gemma-4-31b-it": "Gemma 4 31B",
+};
 
 function checkPromptDuration() {
   const duration = Number($("duration").value);
@@ -283,6 +294,7 @@ function checkPromptDuration() {
 }
 
 $("duration").addEventListener("change", checkPromptDuration);
+$("writer-model").addEventListener("change", () => localStorage.setItem(WRITER_KEY, $("writer-model").value));
 
 $("write-prompt").addEventListener("click", async () => {
   const status = $("screenwriter-status");
@@ -299,12 +311,14 @@ $("write-prompt").addEventListener("click", async () => {
     const response = await api("/screenwriter", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idea, duration }),
+      body: JSON.stringify({ idea, duration, model: $("writer-model").value || undefined }),
     });
     const data = await response.json();
     $("prompt").value = data.prompt;
     writtenFor = data.duration;
     checkPromptDuration();
+    const label = WRITER_LABELS[data.model] || data.model;
+    if (label) setStatus(status, `${status.textContent} Scritto da ${label}.`);
   } catch (error) {
     let message = error.message;
     if (error.detail && error.detail.raw) {
